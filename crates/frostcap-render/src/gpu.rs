@@ -98,6 +98,11 @@ pub struct Gpu {
 
 static SHARED: std::sync::Mutex<Option<Gpu>> = std::sync::Mutex::new(None);
 
+/// Serialises DX12 device creation. Creating devices on several threads at once
+/// crashed the process (access violation in the D3D12/WARP runtime). Only
+/// creation is locked; dropping a device takes no lock.
+static DEVICE_LIFECYCLE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 impl ErrorSink {
     fn same(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
@@ -213,6 +218,9 @@ impl Gpu {
     /// WARP software adapter when `allow_software` (or forced via
     /// `FROSTCAP_FORCE_WARP=1` / `force_software`).
     pub fn new(allow_software: bool, force_software: bool) -> Result<Self> {
+        let _lifecycle = DEVICE_LIFECYCLE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let force =
             force_software || std::env::var_os("FROSTCAP_FORCE_WARP").is_some_and(|v| v == "1");
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
@@ -2038,6 +2046,47 @@ mod tests {
             g[0].abs_diff(g[1]) <= 6 && g[1].abs_diff(g[2]) <= 6 && g[1] > 120 && g[1] < 230,
             "blurred grey {g:?}"
         );
+    }
+
+    /// Regression: creating and dropping separate DX12 (WARP) devices on several
+    /// threads at once crashed the process with an access violation
+    /// (0xc0000005) in CI. Creation is serialised (`DEVICE_LIFECYCLE`); this
+    /// also drops devices on some threads while others are creating them.
+    #[test]
+    fn devices_created_and_dropped_on_many_threads_do_not_crash() {
+        if Gpu::new(true, true).is_err() {
+            eprintln!("no WARP adapter; skipped");
+            return;
+        }
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    for _ in 0..6 {
+                        let gpu = Gpu::new(true, true).unwrap();
+                        let p = cam_project();
+                        let mut c = Compositor::new(
+                            gpu,
+                            64,
+                            36,
+                            p.canvas,
+                            1,
+                            Some((16, 16)),
+                            Readback::Rgba,
+                        )
+                        .unwrap();
+                        c.upload_screen_rgba(&grey_screen());
+                        c.upload_webcam_rgba(&[0u8, 200, 0, 255].repeat(16 * 16));
+                        let s = scene::build(&p, 64.0, 36.0, 0.0, true);
+                        let mut frames = c.submit(&s, 0, 0.0, [0.0, 0.0, 1.0, 1.0], 0.0).unwrap();
+                        frames.extend(c.flush().unwrap());
+                        assert_eq!(frames.pop().unwrap().1.len(), 64 * 36 * 4);
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
     }
 
     #[test]
