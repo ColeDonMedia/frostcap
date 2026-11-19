@@ -1,0 +1,8 @@
+# Pinned to the toolchain the project is developed and tested with (rustc 1.100.0,
+# 2026-11-09). Bump deliberately: update this file, run the full CI locally, commit.
+# The workspace MSRV (`rust-version` in Cargo.toml) is a separate, lower floor.
+[toolchain]
+channel = "1.100.0"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-pc-windows-msvc"]
+profile = "minimal"

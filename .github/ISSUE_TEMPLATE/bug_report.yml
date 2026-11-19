@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in Frostcap does not work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Security problems: do not file them here**, use
+        private reporting instead (see SECURITY.md).
+        Please do not attach recordings or project folders that contain private
+        information: `project.json` can hold window titles and typed keys.
+  - type: input
+    id: version
+    attributes:
+      label: Frostcap version
+      placeholder: "0.1.0 (installer) / commit abc1234 (built from source)"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Windows version and edition
+      description: Run `winver`. Mention if it is an N edition.
+      placeholder: "Windows 11 Pro 24H2 (26100.1234)"
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and display setup
+      placeholder: "NVIDIA RTX 3060, 2 monitors (4K 150% + 1080p 100%)"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Steps to reproduce, what you expected, what you saw.
+      placeholder: |
+        1. Choose window "..."
+        2. Record 10 s with system audio
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error messages or logs
+      description: Text from the error toast, or the terminal if run from source. Remove anything private.
+      render: text

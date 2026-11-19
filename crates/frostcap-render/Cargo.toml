@@ -1,0 +1,34 @@
+[package]
+name = "frostcap-render"
+description = "Frostcap offline export renderer: MF decode -> wgpu (DX12) compositor -> MF H.264/AAC encode, plus GIF."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+frostcap-project.workspace = true
+ab_glyph_rasterizer = { version = "0.1", default-features = false, features = ["std"] }
+gif = { version = "0.14", default-features = false, features = ["std"] }
+
+[target.'cfg(windows)'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["std", "dx12", "wgsl"] }
+windows = { workspace = true, features = [
+  "std",
+  "Win32_Foundation",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Media_MediaFoundation",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+] }
+
+[[example]]
+name = "export"

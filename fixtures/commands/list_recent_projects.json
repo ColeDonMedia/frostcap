@@ -1,0 +1,17 @@
+{
+  "args": {},
+  "response": [
+    {
+      "canvas": {
+        "height": 1440,
+        "width": 2560
+      },
+      "createdAtMs": 1794947689919,
+      "durationMs": 3489,
+      "interrupted": true,
+      "name": "Recording 2026-11-17 14.03.31",
+      "path": "C:\\Users\\me\\Videos\\Frostcap\\Recording 2026-11-17 14.03.31.frostcap",
+      "status": "recording"
+    }
+  ]
+}

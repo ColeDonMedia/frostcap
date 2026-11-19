@@ -1,0 +1,59 @@
+# Frostcap dependency policy: permissive licenses only, no use conditions.
+# Run: cargo deny check licenses
+[graph]
+targets = ["x86_64-pc-windows-msvc"]
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unlicense",
+  "0BSD",
+  "CC0-1.0",
+  # Unicode License v3: permissive, attribution/notice only (ICU4X data/tables via url/idna, unicode-ident).
+  "Unicode-3.0",
+]
+# Explicitly NOT allowed (so builds fail): GPL*, LGPL*, AGPL*, MPL*, SSPL, OFL, BUSL, proprietary.
+
+# Narrow exceptions: MPL-2.0 crates pulled in ONLY by Tauri's build-time code generator
+# (tauri-codegen -> tauri-utils -> dom_query). They run inside the generate_context! macro
+# at compile time and are not linked into frostcap.exe or distributed in this repo.
+# Re-verify with `cargo tree -e normal -i <crate>` before each release.
+exceptions = [
+  { allow = ["MPL-2.0"], crate = "cssparser" },
+  { allow = ["MPL-2.0"], crate = "cssparser-macros" },
+  { allow = ["MPL-2.0"], crate = "selectors" },
+  { allow = ["MPL-2.0"], crate = "dtoa-short" },
+]
+
+[advisories]
+# RustSec advisory database (fetched into $CARGO_HOME/advisory-dbs; on dev machines
+# CARGO_HOME is the repo-local .toolchain/cargo, see env.ps1).
+# Vulnerabilities and unsound advisories are always errors for the whole graph; yanked
+# crates fail the check. "Unmaintained" fails only for crates the workspace depends on
+# directly: transitive ones are reviewed manually before a release (cargo deny check
+# advisories with unmaintained = "all"). RUSTSEC-2026-0192 (ttf-parser) no longer
+# applies: frostcap-render reads TrueType itself (src/font.rs) and only uses
+# ab_glyph_rasterizer, so ab_glyph / owned_ttf_parser / ttf-parser are not in the graph.
+yanked = "deny"
+unmaintained = "workspace"
+unsound = "all"
+# Add an entry only with a reason and a tracking issue, e.g.
+#   { id = "RUSTSEC-0000-0000", reason = "not reachable: <why>; tracked in #123" },
+ignore = []
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+# Only crates.io; no other registries or git dependencies (path deps in the workspace are fine).
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

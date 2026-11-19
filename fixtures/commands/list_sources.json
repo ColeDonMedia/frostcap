@@ -1,0 +1,62 @@
+{
+  "args": {
+    "thumbnails": true
+  },
+  "response": {
+    "monitors": [
+      {
+        "bounds": {
+          "height": 1440,
+          "width": 2560,
+          "x": 0,
+          "y": 0
+        },
+        "id": "\\\\.\\DISPLAY1",
+        "name": "DELL U2720Q",
+        "primary": true,
+        "refreshRate": 60,
+        "scaleFactor": 1.5
+      }
+    ],
+    "sources": [
+      {
+        "height": 1440,
+        "id": "display:\\\\.\\DISPLAY1",
+        "kind": "display",
+        "name": "DELL U2720Q",
+        "source": {
+          "id": "\\\\.\\DISPLAY1",
+          "kind": "monitor"
+        },
+        "thumbnail": "data:image/png;base64,iVBORw0KGgo=",
+        "width": 2560
+      },
+      {
+        "height": 600,
+        "id": "window:65812",
+        "kind": "window",
+        "name": "Untitled - Notepad",
+        "source": {
+          "hwnd": 65812,
+          "kind": "window",
+          "pid": 4242
+        },
+        "width": 900
+      }
+    ],
+    "windows": [
+      {
+        "bounds": {
+          "height": 600,
+          "width": 900,
+          "x": -1200,
+          "y": 80
+        },
+        "hwnd": 65812,
+        "pid": 4242,
+        "processName": "Notepad.exe",
+        "title": "Untitled - Notepad"
+      }
+    ]
+  }
+}

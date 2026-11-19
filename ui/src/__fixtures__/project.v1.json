@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "name": "Fixture",
+  "createdAtMs": 1763400000000,
+  "source": { "kind": "monitor", "name": "Display", "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1080 } },
+  "canvas": { "width": 1920, "height": 1080 },
+  "fps": 60,
+  "durationMs": 10000,
+  "media": {
+    "screen": "screen.mp4",
+    "micAudio": { "file": "audio-mic.wav", "offsetMs": -35, "sampleRate": 48000, "channels": 1, "durationMs": 10035 },
+    "systemAudio": { "file": "audio-system.wav", "offsetMs": 12, "sampleRate": 48000, "channels": 2, "durationMs": 9988 }
+  },
+  "tracks": {
+    "cursor": [
+      { "tMs": 0, "x": 960, "y": 540 },
+      { "tMs": 8, "x": 961, "y": 541 },
+      { "tMs": 500, "x": -12, "y": 1100 },
+      { "tMs": 900, "x": 1919, "y": 0 }
+    ],
+    "clicks": [
+      { "tMs": 1200, "x": 480, "y": 270, "button": "left", "state": "down" },
+      { "tMs": 1290, "x": 480, "y": 270, "button": "left", "state": "up" },
+      { "tMs": 4000, "x": 1500, "y": 800, "button": "right", "state": "down" },
+      { "tMs": 4080, "x": 1500, "y": 800, "button": "right", "state": "up" }
+    ],
+    "keys": [{ "tMs": 2500, "vk": 83, "label": "S", "modifiers": { "ctrl": true, "shift": false, "alt": false, "win": false } }],
+    "focus": [{ "tMs": 0, "windowId": 1, "title": "Editor", "rect": { "x": 0, "y": 0, "width": 1920, "height": 1040 } }]
+  },
+  "edits": {
+    "zoomSegments": [
+      { "startMs": 750, "endMs": 3000, "center": { "x": 0.3, "y": 0.35 }, "scale": 1.8, "easing": "easeInOutCubic", "transitionMs": 650, "origin": "auto" },
+      { "startMs": 5000, "endMs": 7000, "center": { "x": 0.7, "y": 0.6 }, "scale": 2.2, "easing": "easeOutQuint", "transitionMs": 350, "origin": "manual" }
+    ],
+    "trims": [
+      { "startMs": 0, "endMs": 400 },
+      { "startMs": 8000, "endMs": 8600 }
+    ],
+    "style": {
+      "background": "linear-gradient(135deg,#a1c4fd,#c2e9fb)",
+      "padding": 0.08,
+      "cornerRadius": 12,
+      "shadow": 0.5,
+      "cursorScale": 1.25,
+      "cursorSmoothing": true,
+      "showClicks": true,
+      "showKeys": false
+    }
+  }
+}

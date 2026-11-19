@@ -1,0 +1,26 @@
+{
+  "args": {
+    "cursor": false,
+    "fps": 60,
+    "keys": "shortcuts",
+    "mic": true,
+    "source": {
+      "id": "\\\\.\\DISPLAY1",
+      "kind": "monitor"
+    },
+    "systemAudio": true,
+    "webcam": "default"
+  },
+  "error": {
+    "code": "disk_full",
+    "message": "not enough disk space: only 512 MB free on the recording drive (need 1024 MB)"
+  },
+  "response": {
+    "canvas": {
+      "height": 1440,
+      "width": 2560
+    },
+    "projectDir": "C:\\Users\\me\\Videos\\Frostcap\\Recording 2026-11-17 14.03.31.frostcap",
+    "startMs": 1601
+  }
+}

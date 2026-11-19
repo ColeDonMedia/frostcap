@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-generate-auto-zoom"
+description = "Enables the generate_auto_zoom command without any pre-configured scope."
+commands.allow = ["generate_auto_zoom"]
+
+[[permission]]
+identifier = "deny-generate-auto-zoom"
+description = "Denies the generate_auto_zoom command without any pre-configured scope."
+commands.deny = ["generate_auto_zoom"]

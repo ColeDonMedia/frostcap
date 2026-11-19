@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Frostcap",
+  "version": "0.1.0",
+  "identifier": "app.frostcap.desktop",
+  "build": {
+    "frontendDist": "../ui/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm --prefix ../ui run dev",
+    "beforeBuildCommand": "npm --prefix ../ui ci --ignore-scripts && npm --prefix ../ui run build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Frostcap",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 600,
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost blob:; connect-src ipc: http://ipc.localhost asset: http://asset.localhost; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "devCsp": null,
+      "freezePrototype": true,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$VIDEO/Frostcap/*.frostcap/*.mp4", "$VIDEO/Frostcap/*.frostcap/*.wav"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Frostcap contributors",
+    "copyright": "Copyright (c) 2026 Frostcap contributors. MIT License.",
+    "license": "MIT",
+    "licenseFile": "../LICENSE",
+    "shortDescription": "Free screen recorder and editor for Windows",
+    "longDescription": "Frostcap records your screen, webcam and audio and turns them into polished videos with automatic zoom, all locally. No accounts, no cloud, no telemetry.",
+    "category": "Video",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png", "icons/icon.ico"],
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

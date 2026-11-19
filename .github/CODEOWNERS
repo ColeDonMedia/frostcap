@@ -1,0 +1,12 @@
+# CODEOWNERS placeholder. Replace `@OWNER` with real GitHub users or teams
+# (e.g. @your-login or @your-org/frostcap-maintainers) before enabling
+# "Require review from Code Owners". Later rules take precedence.
+#
+# *                         @OWNER
+# /crates/                  @OWNER
+# /src-tauri/               @OWNER
+# /ui/                      @OWNER
+# /deny.toml                @OWNER
+# /.github/                 @OWNER
+# /docs/LEGAL.md            @OWNER
+# /docs/PRIVACY.md          @OWNER

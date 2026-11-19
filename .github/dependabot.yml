@@ -1,0 +1,35 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      tauri:
+        patterns: ["tauri*", "wry", "tao", "webview2-com*", "window-vibrancy"]
+      windows:
+        patterns: ["windows", "windows-*"]
+      wgpu:
+        patterns: ["wgpu*", "naga*"]
+    # Note: license policy is enforced by `cargo deny` in CI; a bump that brings in
+    # a non-permissive crate fails there. Regenerate THIRD_PARTY_LICENSES.md on the PR.
+
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      react:
+        patterns: ["react", "react-dom", "@types/react*"]
+      build-tools:
+        dependency-type: development
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

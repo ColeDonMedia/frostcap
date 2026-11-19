@@ -1,0 +1,12 @@
+[package]
+name = "frostcap-project"
+description = "Frostcap project.json schema, validation and loading (serde only, no OS code)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

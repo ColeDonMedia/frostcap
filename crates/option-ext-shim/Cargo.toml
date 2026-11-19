@@ -1,0 +1,13 @@
+[package]
+# Drop-in, independently written MIT replacement for the MPL-2.0 `option-ext`
+# crate (pulled in by tauri -> dirs -> dirs-sys). Wired via [patch.crates-io] in
+# the workspace root. Only the three-method trait API is provided.
+name = "option-ext"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+description = "Frostcap MIT shim providing the OptionExt trait API (contains, map_or2, map_or_else2)."
+publish = false
+
+[lib]
+path = "src/lib.rs"

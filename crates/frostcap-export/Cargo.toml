@@ -1,0 +1,15 @@
+[package]
+name = "frostcap-export"
+description = "Frostcap export orchestration: raw copy or baked render, cancel, atomic output."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+frostcap-core.workspace = true
+frostcap-render.workspace = true
+frostcap-project.workspace = true

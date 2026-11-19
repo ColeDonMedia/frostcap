@@ -1,0 +1,42 @@
+[package]
+name = "frostcap"
+description = "Frostcap - free screen recorder and editor for Windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "frostcap_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "frostcap"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7", default-features = false, features = [] }
+
+[dependencies]
+frostcap-core.workspace = true
+frostcap-export.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# No updater / telemetry / plugins. `protocol-asset` lets the editor <video> load
+# screen.mp4 from the project folder (scope set at runtime).
+tauri = { version = "2.12", default-features = false, features = [
+  "wry",
+  "compression",
+  "common-controls-v6",
+  "protocol-asset",
+] }
+
+[target.'cfg(windows)'.dependencies]
+window-vibrancy = { version = "0.8.1", default-features = false }
+
+[features]
+# Set by the Tauri CLI for production builds; plain `cargo build --release` embeds
+# the frontend too because we always enable it (see build.rs comment).
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

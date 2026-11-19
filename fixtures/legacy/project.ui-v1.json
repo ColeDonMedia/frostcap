@@ -1,0 +1,172 @@
+{
+  "canvas": {
+    "height": 1080,
+    "width": 1920
+  },
+  "createdAtMs": 1,
+  "cursorBaked": false,
+  "durationMs": 3000,
+  "edits": {
+    "style": {
+      "background": "linear-gradient(135deg,#a1c4fd,#c2e9fb)",
+      "cornerRadius": 12,
+      "cursorScale": 1,
+      "cursorSmoothing": true,
+      "padding": 0.08,
+      "shadow": 0.5,
+      "showClicks": true,
+      "showKeys": true
+    },
+    "trims": [],
+    "zoomSegments": [
+      {
+        "center": {
+          "x": 0.278,
+          "y": 0.278
+        },
+        "easing": "easeInOutCubic",
+        "endMs": 1800,
+        "origin": "auto",
+        "scale": 1.8,
+        "startMs": 0,
+        "transitionMs": 650
+      }
+    ],
+    "ui": {
+      "v": 1,
+      "frame": "windows",
+      "zoom": {
+        "preset": "snappy",
+        "scale": 2.5,
+        "easing": "linear",
+        "transitionMs": 300
+      },
+      "cursor": {
+        "visible": false,
+        "smoothing": 0.25,
+        "motionBlur": 0.7
+      },
+      "webcam": {
+        "enabled": true,
+        "shape": "rounded",
+        "size": 0.3,
+        "position": "top-left"
+      },
+      "audio": {
+        "noiseGate": false,
+        "noiseGateThreshold": -40,
+        "highPass": true,
+        "highPassHz": 120,
+        "normalize": false,
+        "targetLufs": -14,
+        "micGain": 0,
+        "systemGain": 1.5
+      },
+      "captions": {
+        "enabled": true,
+        "fontSize": 52,
+        "position": "top",
+        "background": false
+      },
+      "captionCues": [
+        {
+          "start": 100,
+          "end": 900,
+          "text": "hello"
+        },
+        {
+          "start": 1200,
+          "end": 2400,
+          "text": "world"
+        }
+      ],
+      "splits": [
+        1000,
+        2000
+      ]
+    }
+  },
+  "fps": 60,
+  "media": {
+    "micAudio": {
+      "channels": 2,
+      "durationMs": 3000,
+      "file": "audio-mic.wav",
+      "offsetMs": 0,
+      "sampleRate": 48000
+    },
+    "screen": "screen.mp4",
+    "webcam": "webcam.mp4",
+    "webcamVideo": {
+      "durationMs": 3000,
+      "file": "webcam.mp4",
+      "height": 720,
+      "name": "Integrated Camera",
+      "offsetMs": 0,
+      "width": 1280
+    }
+  },
+  "name": "Recording 2026-11-17 14.03.31",
+  "pauses": [
+    {
+      "atMs": 1500,
+      "durationMs": 2000
+    }
+  ],
+  "source": {
+    "bounds": {
+      "height": 1080,
+      "width": 1920,
+      "x": 0,
+      "y": 0
+    },
+    "kind": "monitor",
+    "name": "Display"
+  },
+  "status": "complete",
+  "tracks": {
+    "clicks": [
+      {
+        "button": "left",
+        "state": "down",
+        "tMs": 5,
+        "x": 1,
+        "y": 2
+      }
+    ],
+    "cursor": [
+      {
+        "tMs": 0,
+        "x": 1,
+        "y": 2
+      }
+    ],
+    "focus": [
+      {
+        "rect": {
+          "height": 600,
+          "width": 900,
+          "x": 100,
+          "y": 80
+        },
+        "tMs": 0,
+        "title": "",
+        "windowId": 1
+      }
+    ],
+    "keys": [
+      {
+        "label": "S",
+        "modifiers": {
+          "alt": false,
+          "ctrl": true,
+          "shift": false,
+          "win": false
+        },
+        "tMs": 1200,
+        "vk": 83
+      }
+    ]
+  },
+  "version": 1
+}

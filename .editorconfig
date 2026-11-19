@@ -1,0 +1,28 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.rs]
+indent_size = 4
+max_line_length = 100
+
+[*.{toml,md}]
+indent_size = 2
+
+[*.md]
+# Two trailing spaces are a Markdown line break.
+trim_trailing_whitespace = false
+
+[*.{ps1,psm1,cmd,bat}]
+end_of_line = crlf
+indent_size = 4
+
+[THIRD_PARTY_LICENSES.md]
+# Generated; contains upstream license texts verbatim (after whitespace normalisation).
+max_line_length = off

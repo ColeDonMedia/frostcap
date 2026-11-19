@@ -1,0 +1,6 @@
+# Repo-local cargo config. Toolchain/caches/target live on E: (see env.ps1).
+
+[target.x86_64-pc-windows-msvc]
+# Statically link the MSVC CRT so frostcap.exe is a single self-contained binary
+# (no vcruntime140.dll redistributable needed).
+rustflags = ["-C", "target-feature=+crt-static"]

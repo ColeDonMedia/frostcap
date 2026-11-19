@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = ["crates/frostcap-project", "crates/frostcap-core", "crates/frostcap-render", "crates/frostcap-export", "crates/option-ext-shim", "src-tauri"]
+default-members = ["crates/frostcap-project", "crates/frostcap-core", "crates/frostcap-render", "crates/frostcap-export", "crates/option-ext-shim", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.90"
+
+[workspace.dependencies]
+frostcap-core = { path = "crates/frostcap-core" }
+frostcap-render = { path = "crates/frostcap-render" }
+frostcap-project = { path = "crates/frostcap-project" }
+frostcap-export = { path = "crates/frostcap-export" }
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+thiserror = { version = "2", default-features = false, features = ["std"] }
+# Kept on the same `windows` major as tauri 2.x / windows-capture 2.x so only one copy is compiled.
+windows = { version = "0.62", default-features = false }
+windows-capture = { version = "2.0.1", default-features = false }
+
+# MIT shim replacing the MPL-2.0 `option-ext` (tauri -> dirs -> dirs-sys).
+[patch.crates-io]
+option-ext = { path = "crates/option-ext-shim" }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+# abort, not unwind: unwind tables cost +5.1 MB (+56%) on this exe. Recording
+# crash safety comes from fragmented MP4 + sidecars + recover_project (a crash
+# loses ~1 s), and command paths are kept panic-free (checked math, no unwrap).
+# The catch_unwind guards still protect debug/test builds.
+panic = "abort"
+debug = false
+incremental = false
+
+[profile.dev]
+# Keep debug builds reasonably small/fast on the repo-local target dir.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1

@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest an improvement or new feature.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Frostcap to do?
+    validations:
+      required: true
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Project constraints
+      description: Frostcap stays free, offline and permissively licensed.
+      options:
+        - label: This does not need network access, accounts or telemetry.
+        - label: Any library it needs is under a permissive license (MIT, Apache-2.0, BSD, ISC, Zlib, ...), not GPL/LGPL/MPL.

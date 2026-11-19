@@ -1,0 +1,17 @@
+{
+  "args": {},
+  "response": {
+    "chords": [
+      {
+        "action": "startStop",
+        "chord": "Ctrl+Alt+Shift+R",
+        "registered": true
+      },
+      {
+        "action": "pauseResume",
+        "chord": "Ctrl+Alt+Shift+P",
+        "registered": false
+      }
+    ]
+  }
+}

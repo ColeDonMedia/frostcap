@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pick-region"
+description = "Enables the pick_region command without any pre-configured scope."
+commands.allow = ["pick_region"]
+
+[[permission]]
+identifier = "deny-pick-region"
+description = "Denies the pick_region command without any pre-configured scope."
+commands.deny = ["pick_region"]

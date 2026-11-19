@@ -1,0 +1,180 @@
+{
+  "args": {
+    "path": "C:\\Users\\me\\Videos\\Frostcap\\Recording 2026-11-17 14.03.31.frostcap"
+  },
+  "error": {
+    "code": "invalid_path",
+    "message": "invalid path: C:\\Windows is not a .frostcap folder"
+  },
+  "response": {
+    "canvas": {
+      "height": 1080,
+      "width": 1920
+    },
+    "createdAtMs": 1,
+    "cursorBaked": false,
+    "durationMs": 3000,
+    "edits": {
+      "captions": [
+        {
+          "endMs": 1400,
+          "startMs": 200,
+          "text": "Open the settings"
+        },
+        {
+          "endMs": 2800,
+          "startMs": 1600,
+          "text": "Save with Ctrl + S"
+        }
+      ],
+      "splits": [
+        1500
+      ],
+      "style": {
+        "audio": {
+          "highPass": true,
+          "highPassHz": 100.0,
+          "micGain": 1.0,
+          "noiseGate": true,
+          "noiseGateThreshold": -45.0,
+          "normalize": true,
+          "systemGain": 0.5,
+          "targetLufs": -16.0
+        },
+        "background": "linear-gradient(135deg,#a1c4fd,#c2e9fb)",
+        "captions": {
+          "background": true,
+          "enabled": true,
+          "fontSize": 44.0,
+          "position": "bottom"
+        },
+        "cornerRadius": 12.0,
+        "cursor": {
+          "motionBlur": 0.25,
+          "smoothing": 0.5,
+          "visible": true
+        },
+        "cursorScale": 1.0,
+        "cursorSmoothing": true,
+        "frame": "windows",
+        "padding": 0.08,
+        "shadow": 0.5,
+        "showClicks": true,
+        "showKeys": true,
+        "webcam": {
+          "enabled": true,
+          "position": "top-right",
+          "shape": "rounded",
+          "size": 0.25
+        }
+      },
+      "trims": [],
+      "ui": {
+        "v": 1,
+        "zoom": {
+          "easing": "easeInOutCubic",
+          "preset": "balanced",
+          "scale": 1.8,
+          "transitionMs": 650
+        }
+      },
+      "zoomSegments": [
+        {
+          "center": {
+            "x": 0.278,
+            "y": 0.278
+          },
+          "easing": "easeInOutCubic",
+          "endMs": 1800,
+          "origin": "auto",
+          "scale": 1.8,
+          "startMs": 0,
+          "transitionMs": 650
+        }
+      ]
+    },
+    "fps": 60,
+    "media": {
+      "micAudio": {
+        "channels": 2,
+        "durationMs": 3000,
+        "file": "audio-mic.wav",
+        "offsetMs": 0,
+        "sampleRate": 48000
+      },
+      "screen": "screen.mp4",
+      "webcam": "webcam.mp4",
+      "webcamVideo": {
+        "durationMs": 3000,
+        "file": "webcam.mp4",
+        "height": 720,
+        "name": "Integrated Camera",
+        "offsetMs": 0,
+        "width": 1280
+      }
+    },
+    "name": "Recording 2026-11-17 14.03.31",
+    "pauses": [
+      {
+        "atMs": 1500,
+        "durationMs": 2000
+      }
+    ],
+    "source": {
+      "bounds": {
+        "height": 1080,
+        "width": 1920,
+        "x": 0,
+        "y": 0
+      },
+      "kind": "monitor",
+      "name": "Display"
+    },
+    "status": "complete",
+    "tracks": {
+      "clicks": [
+        {
+          "button": "left",
+          "state": "down",
+          "tMs": 5,
+          "x": 1,
+          "y": 2
+        }
+      ],
+      "cursor": [
+        {
+          "tMs": 0,
+          "x": 1,
+          "y": 2
+        }
+      ],
+      "focus": [
+        {
+          "rect": {
+            "height": 600,
+            "width": 900,
+            "x": 100,
+            "y": 80
+          },
+          "tMs": 0,
+          "title": "",
+          "windowId": 1
+        }
+      ],
+      "keys": [
+        {
+          "label": "S",
+          "modifiers": {
+            "alt": false,
+            "ctrl": true,
+            "shift": false,
+            "win": false
+          },
+          "tMs": 1200,
+          "vk": 83
+        }
+      ]
+    },
+    "version": 1
+  }
+}

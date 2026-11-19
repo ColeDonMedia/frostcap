@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-default-output-dir"
+description = "Enables the default_output_dir command without any pre-configured scope."
+commands.allow = ["default_output_dir"]
+
+[[permission]]
+identifier = "deny-default-output-dir"
+description = "Denies the default_output_dir command without any pre-configured scope."
+commands.deny = ["default_output_dir"]

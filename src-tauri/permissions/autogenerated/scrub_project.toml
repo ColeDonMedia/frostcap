@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-scrub-project"
+description = "Enables the scrub_project command without any pre-configured scope."
+commands.allow = ["scrub_project"]
+
+[[permission]]
+identifier = "deny-scrub-project"
+description = "Denies the scrub_project command without any pre-configured scope."
+commands.deny = ["scrub_project"]

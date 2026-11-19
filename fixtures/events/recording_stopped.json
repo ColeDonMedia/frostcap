@@ -1,0 +1,11 @@
+{
+  "error": {
+    "code": "disk_full",
+    "message": "only 280 MB left on the recording drive; recording stopped"
+  },
+  "result": {
+    "durationMs": 3489,
+    "projectDir": "C:\\Users\\me\\Videos\\Frostcap\\Recording 2026-11-17 14.03.31.frostcap",
+    "warnings": []
+  }
+}
