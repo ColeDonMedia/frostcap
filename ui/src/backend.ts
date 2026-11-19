@@ -37,8 +37,16 @@ import type {
   WireTrimRange,
   WireZoomPreset,
   WireZoomSegment,
+  WireAnnotation,
+  WireSpeedSegment,
+  WireWebcam,
+  WireExportPreset,
+  WireOutputPreset,
 } from "./contract";
 import type {
+  Annotation,
+  SpeedSegment,
+  WebcamStyle,
   CameraInfo,
   CaptureSource,
   Clip,
@@ -57,6 +65,7 @@ import type {
   ZoomSegment,
 } from "./types";
 import { GRADIENTS, defaultStyle } from "./lib/presets";
+import { t } from "./i18n";
 
 declare global {
   interface Window {
@@ -117,46 +126,46 @@ export function toBackendError(e: unknown): BackendError {
 export function describeIssue(i: Issue): string {
   switch (i.code) {
     case "disk_full":
-      return `${i.message}. Free some space on the recording drive, or change the output folder in Settings.`;
+      return t("issue.disk_full", { message: i.message });
     case "source_gone":
-      return `${i.message}. Pick the screen or window again and restart the recording.`;
+      return t("issue.source_gone", { message: i.message });
     case "no_h264":
-      return "No H.264 video encoder is available. Install the HEVC/H.264 Video Extensions or update your graphics driver.";
+      return t("issue.no_h264");
     case "invalid_path":
-      return `${i.message}. Choose the location with the file dialog.`;
+      return t("issue.invalid_path", { message: i.message });
     case "invalid_project":
-      return `${i.message}. If this was an interrupted recording, use Recover.`;
+      return t("issue.invalid_project", { message: i.message });
     case "permission":
-      return `${i.message}. Check that Frostcap may write to this folder.`;
+      return t("issue.permission", { message: i.message });
     case "internal":
       return i.message;
     case "warning":
       return i.message;
     case "notImplemented":
-      return "This needs a newer Frostcap backend.";
+      return t("issue.notImplemented");
     case "alreadyRecording":
-      return "A recording is already running. Stop it from the recorder bar first.";
+      return t("issue.alreadyRecording");
     case "notRecording":
-      return "No recording is running.";
+      return t("issue.notRecording");
     case "sourceNotFound":
-      return "That screen or window is gone. Refresh the source list and pick it again.";
+      return t("issue.sourceNotFound");
     case "unsupportedVersion":
-      return "This project was made by a newer Frostcap. Update the app to open it.";
+      return t("issue.unsupportedVersion");
     case "projectCorrupt":
-      return "project.json could not be read. Try Recover, or restore a backup.";
+      return t("issue.projectCorrupt");
     case "audio":
     case "micUnavailable":
-      return `Audio problem: ${i.message}. Check the input device in Windows Sound settings, or record without audio.`;
+      return t("issue.audio", { message: i.message });
     case "capture":
-      return `Screen capture failed: ${i.message}. Close protected content (DRM video) or pick another source.`;
+      return t("issue.capture", { message: i.message });
     case "io":
-      return `Disk error: ${i.message}. Check free space and that the folder is writable.`;
+      return t("issue.io", { message: i.message });
     case "mediaMissing":
-      return "The recording file is missing from the project folder.";
+      return t("issue.mediaMissing");
     case "diskLow":
-      return `Low disk space: ${i.message}. Stop soon or free some space.`;
+      return t("issue.diskLow", { message: i.message });
     case "systemAudioSilent":
-      return "System audio is silent. Is playback muted or routed to another device?";
+      return t("issue.systemAudioSilent");
     default:
       return i.message;
   }
@@ -363,6 +372,23 @@ export const LIMITS = {
   targetLufs: [-40, -5],
   gain: [0, 4],
   fontSize: [8, 200],
+  webcamMargin: [0, 0.2],
+  webcamBorderWidth: [0, 20],
+  brightness: [-1, 1],
+  /** webcam contrast and saturation */
+  gain2: [0, 2],
+  backgroundBlur: [0, 100],
+  speed: [0.25, 4],
+  annStroke: [1, 40],
+  annCorner: [0, 200],
+  annFadeMs: [0, 2000],
+  maxAnnotations: 500,
+  /** at most this many annotations are drawn at once (the first by start time) */
+  maxAnnotationsDrawn: 8,
+  maxAnnotationText: 500,
+  maxIdBytes: 64,
+  maxSpeed: 10_000,
+  maxDurationMs: 86_400_000,
   maxCues: 10_000,
   maxSplits: 10_000,
   maxCueBytes: 4096,
@@ -481,6 +507,91 @@ const WIRE_STYLE_DEFAULT: WireStyle = {
   showKeys: false,
 };
 
+const HEX = /^#[0-9a-fA-F]{6}$/;
+const hex = (v: unknown, def: string) => (typeof v === "string" && HEX.test(v) ? v : def);
+
+/** Webcam style: every new field is optional on read (Rust defaults), deep-merged. */
+function mergeWebcam(d: WebcamStyle, w: WireWebcam | undefined): WebcamStyle {
+  if (!w) return structuredClone(d);
+  const { chromaKey, background, ...rest } = w;
+  const out: WebcamStyle = { ...d, ...rest, chromaKey: { ...d.chromaKey, ...(chromaKey ?? {}) }, background: { ...d.background, ...(background ?? {}) } };
+  if (!background?.image) delete out.background.image;
+  return out;
+}
+
+function toWireWebcam(w: WebcamStyle, d: WebcamStyle): NonNullable<WireStyle["webcam"]> {
+  const L = LIMITS;
+  const k = w.chromaKey;
+  const b = w.background;
+  return {
+    enabled: w.enabled,
+    shape: w.shape,
+    size: clampTo(w.size, L.webcamSize, d.size),
+    position: w.position,
+    margin: clampTo(w.margin, L.webcamMargin, d.margin),
+    borderWidth: clampTo(w.borderWidth, L.webcamBorderWidth, d.borderWidth),
+    borderColor: hex(w.borderColor, d.borderColor),
+    mirror: w.mirror,
+    brightness: clampTo(w.brightness, L.brightness, 0),
+    contrast: clampTo(w.contrast, L.gain2, 1),
+    saturation: clampTo(w.saturation, L.gain2, 1),
+    shadow: clampTo(w.shadow, L.unit, d.shadow),
+    chromaKey: { enabled: k.enabled, color: hex(k.color, d.chromaKey.color), similarity: clampTo(k.similarity, L.unit, d.chromaKey.similarity), smoothness: clampTo(k.smoothness, L.unit, d.chromaKey.smoothness), spill: clampTo(k.spill, L.unit, d.chromaKey.spill) },
+    background: {
+      kind: b.kind,
+      color: hex(b.color, d.background.color),
+      gradient: new TextEncoder().encode(b.gradient).length > L.maxStringBytes ? d.background.gradient : b.gradient,
+      ...(b.image ? { image: b.image } : {}),
+      blur: clampTo(b.blur, L.unit, d.background.blur),
+    },
+  };
+}
+
+export function fromWireAnnotation(a: WireAnnotation): Annotation {
+  return { id: a.id || nid("ann"), kind: a.kind, start: a.startMs, end: a.endMs, x: a.x, y: a.y, w: a.w, h: a.h, x2: a.x2, y2: a.y2, color: a.color, strokeWidth: a.strokeWidth, fill: a.fill, text: a.text, fontSize: a.fontSize, opacity: a.opacity, strength: a.strength, dim: a.dim, cornerRadius: a.cornerRadius, fadeMs: a.fadeMs };
+}
+
+const ANN_KINDS: readonly string[] = ["arrow", "text", "rect", "ellipse", "highlight", "spotlight", "blur", "pixelate"];
+
+/** UI -> wire with every field clamped to the schema (a NaN or oversized value never reaches the backend). */
+export function toWireAnnotation(a: Annotation): WireAnnotation {
+  const L = LIMITS;
+  const startMs = Math.min(L.maxDurationMs, ms(a.start));
+  return {
+    id: utf8Truncate(a.id, L.maxIdBytes),
+    kind: (ANN_KINDS.includes(a.kind) ? a.kind : "arrow") as WireAnnotation["kind"],
+    startMs,
+    endMs: Math.min(L.maxDurationMs, Math.max(startMs, ms(a.end))),
+    x: clampTo(a.x, L.unit, 0),
+    y: clampTo(a.y, L.unit, 0),
+    w: clampTo(a.w, L.unit, 0),
+    h: clampTo(a.h, L.unit, 0),
+    x2: clampTo(a.x2, L.unit, 0),
+    y2: clampTo(a.y2, L.unit, 0),
+    color: hex(a.color, "#4ed2fb"),
+    strokeWidth: clampTo(a.strokeWidth, L.annStroke, 4),
+    fill: !!a.fill,
+    text: [...a.text].slice(0, L.maxAnnotationText).join(""),
+    fontSize: clampTo(a.fontSize, L.fontSize, 40),
+    opacity: clampTo(a.opacity, L.unit, 1),
+    strength: clampTo(a.strength, L.unit, 0.5),
+    dim: clampTo(a.dim, L.unit, 0.6),
+    cornerRadius: clampTo(a.cornerRadius, L.annCorner, 0),
+    fadeMs: Math.round(clampTo(a.fadeMs, L.annFadeMs, 150)),
+  };
+}
+
+export function toWireSpeed(list: SpeedSegment[]): WireSpeedSegment[] {
+  const sorted = list.map((s) => ({ startMs: ms(s.start), endMs: ms(s.end), speed: clampTo(s.speed, LIMITS.speed, 1) })).sort((a, b) => a.startMs - b.startMs);
+  const out: WireSpeedSegment[] = [];
+  for (const s of sorted) {
+    const startMs = Math.max(s.startMs, out.at(-1)?.endMs ?? 0); // segments may touch but never overlap
+    const endMs = Math.max(startMs, s.endMs);
+    if (endMs > startMs) out.push({ startMs, endMs, speed: s.speed });
+  }
+  return out.slice(0, LIMITS.maxSpeed);
+}
+
 /** Typed groups win; a legacy v1 blob fills only the groups that are absent. */
 export function fromWireStyle(ws: Partial<WireStyle> | undefined, x: Partial<UiBlob>): ProjectStyle {
   const w = { ...WIRE_STYLE_DEFAULT, ...(ws ?? {}) };
@@ -502,7 +613,8 @@ export function fromWireStyle(ws: Partial<WireStyle> | undefined, x: Partial<UiB
       motionBlur: cur?.motionBlur ?? d.cursor.motionBlur,
     },
     keys: { show: w.showKeys },
-    webcam: { ...d.webcam, ...(w.webcam ?? x.webcam ?? {}) },
+    webcam: mergeWebcam(d.webcam, w.webcam ?? x.webcam),
+    ...(w.backgroundImage ? { backgroundImage: { file: w.backgroundImage.file, fit: w.backgroundImage.fit === "contain" ? "contain" : "cover", blur: w.backgroundImage.blur } } : {}),
     audio: { ...d.audio, ...(w.audio ?? x.audio ?? {}) },
     captions: { ...d.captions, ...(w.captions ?? x.captions ?? {}) },
   };
@@ -532,7 +644,8 @@ export function toWireStyle(s: ProjectStyle): WireStyle {
       smoothing: clampTo(s.cursor.smoothing, L.unit, d.cursor.smoothing),
       motionBlur: clampTo(s.cursor.motionBlur, L.unit, d.cursor.motionBlur),
     },
-    webcam: { enabled: s.webcam.enabled, shape: s.webcam.shape, size: clampTo(s.webcam.size, L.webcamSize, d.webcam.size), position: s.webcam.position },
+    webcam: toWireWebcam(s.webcam, d.webcam),
+    ...(s.backgroundImage ? { backgroundImage: { file: s.backgroundImage.file, fit: s.backgroundImage.fit, blur: clampTo(s.backgroundImage.blur, L.backgroundBlur, 0) } } : {}),
     audio: {
       noiseGate: a.noiseGate,
       noiseGateThreshold: clampTo(a.noiseGateThreshold, L.noiseGateThreshold, da.noiseGateThreshold),
@@ -587,6 +700,8 @@ export function fromWireProject(w: WireProject, dir: string, assetUrl: (abs: str
     keys: t.keys.map((k) => ({ t: k.tMs, vk: k.vk, label: k.label, modifiers: { ...k.modifiers } })),
     focus: t.focus.map((f) => ({ t: f.tMs, windowId: f.windowId, title: f.title ?? "", rect: { x: f.rect.x / W, y: f.rect.y / H, width: f.rect.width / W, height: f.rect.height / H } })),
     zoomSegments: (w.edits?.zoomSegments ?? []).map(fromWireZoom).sort((a, b) => a.start - b.start),
+    annotations: (w.edits?.annotations ?? []).map(fromWireAnnotation),
+    speed: (w.edits?.speed ?? []).map((s) => ({ id: nid("spd"), start: s.startMs, end: s.endMs, speed: s.speed })),
     clips: trimsToClips(w.edits?.trims ?? [], w.durationMs, w.edits?.splits ?? x.splits ?? []),
     captions: cues.map((c) => ({ ...c, id: nid("c") })),
     style: fromWireStyle(w.edits?.style, x),
@@ -609,6 +724,8 @@ export function toWireProject(p: Project): WireProject {
       zoomSegments: [...p.zoomSegments].sort((a, b) => a.start - b.start).map(toWireZoom),
       trims,
       style: toWireStyle(p.style),
+      annotations: p.annotations.slice(0, LIMITS.maxAnnotations).map(toWireAnnotation),
+      speed: toWireSpeed(p.speed),
       captions,
       splits: splits.slice(0, LIMITS.maxSplits),
       ui: { v: 1, zoom: p.style.zoom },
@@ -617,6 +734,34 @@ export function toWireProject(p: Project): WireProject {
 }
 
 // ================================================================= the API
+
+/** Backend-persisted capture options (both default to true). */
+export interface CaptureSettings {
+  captureBorder: boolean;
+  excludeOwnWindows: boolean;
+}
+
+/** Wire shapes of the command-wave fixtures (fixtures/commands/{encoder_capabilities,export_batch,suggest_cuts}.json). */
+export interface EncoderCaps {
+  h264: boolean;
+  av1: boolean;
+  vp9: boolean;
+  formats: string[];
+}
+export interface BatchJob {
+  outPath: string;
+  preset: WireExportPreset;
+}
+export type BatchResult = { index: number; outPath: string } & (
+  | { ok: true; bytes: number; output?: WireOutputPreset }
+  | { ok: false; error: { code: string; message: string } }
+);
+export interface SuggestOptions {
+  rmsThresholdDb: number;
+  minIdleMs: number;
+  marginMs: number;
+  cursorMinPx: number;
+}
 
 export const backend = {
   async listSources(): Promise<CaptureSource[]> {
@@ -706,6 +851,45 @@ export const backend = {
   async setHotkeys(bindings: { startStop: string; pauseResume: string }): Promise<HotkeyChord[]> {
     return (await call<WireHotkeyInfo>("set_hotkeys", { bindings: { startStop: bindings.startStop, pauseResume: bindings.pauseResume } })).chords.map((c) => ({ ...c }));
   },
+  // ---- self-test (dev harness; see src/selftest). The backend adds these commands.
+  /** `{selftest:false}` when the backend does not know the command. */
+  async launchOptions(): Promise<{ selftest: boolean }> {
+    try {
+      const r = await call<{ selftest?: boolean } | null>("launch_options");
+      return { selftest: r?.selftest === true };
+    } catch {
+      return { selftest: false };
+    }
+  },
+  encoderCapabilities: () => call<EncoderCaps>("encoder_capabilities"),
+  /** Native image dialog (the backend only imports what this returned). Null when cancelled. */
+  pickImage: () => call<string | null>("pick_image"),
+  /** Copies the picked image into the project; returns the basename for style.backgroundImage.file / webcam.background.image. */
+  async importBackground(projectPath: string, sourcePath: string): Promise<string> {
+    return (await call<{ file: string }>("import_background", { projectPath, sourcePath })).file;
+  },
+  async suggestCuts(projectPath: string, options: SuggestOptions): Promise<{ startMs: number; endMs: number }[]> {
+    return (await call<{ ranges: { startMs: number; endMs: number }[] }>("suggest_cuts", { projectPath, options })).ranges;
+  },
+  exportBatch: (req: { projectPath: string; jobs: BatchJob[]; jobId: string }) => call<{ jobId: string; results: BatchResult[] }>("export_batch", req),
+  async captureSettings(): Promise<CaptureSettings> {
+    return { ...(await call<CaptureSettings>("capture_settings")) };
+  },
+  async setCaptureBorder(enabled: boolean): Promise<CaptureSettings> {
+    return { ...(await call<CaptureSettings>("set_capture_border", { enabled })) };
+  },
+  async setExcludeOwnWindows(enabled: boolean): Promise<CaptureSettings> {
+    return { ...(await call<CaptureSettings>("set_exclude_own_windows", { enabled })) };
+  },
+  /** The backend takes the report as a JSON string. */
+  writeSelftestReport: (report: unknown) => call<void>("write_selftest_report", { report: JSON.stringify(report) }),
+  /** Deletes only what the self-test created: its project folder and exported file. */
+  selftestCleanup: (paths: string[]) => call<void>("selftest_cleanup", { paths }),
+  /** Webview URL for an absolute media path (null in the browser). */
+  async assetUrl(path: string): Promise<string | null> {
+    await ensureAssetUrl();
+    return toAssetUrl(path);
+  },
   async listCameras(): Promise<CameraInfo[]> {
     return (await call<WireCameraInfo[]>("list_cameras")).map((c) => ({ id: c.id, name: c.name }));
   },
@@ -718,7 +902,7 @@ export const backend = {
     listen<WireStoppedEvent>(EVENTS.recordingStopped, (p) => cb({ result: p.result ? fromWireStop(p.result) : null, error: p.error ? issue(p.error) : null })),
   onHotkey: (cb: (action: WireHotkeyPressed["action"], handled: boolean) => void) => listen<WireHotkeyPressed>(EVENTS.hotkeyPressed, (p) => cb(p.action, p.handled)),
   onExportProgress: (cb: (p: ExportProgress) => void) =>
-    listen<WireExportProgress>(EVENTS.exportProgress, (p) => cb({ jobId: p.jobId, progress: p.progress, stage: p.stage ?? "" })),
+    listen<WireExportProgress>(EVENTS.exportProgress, (p) => cb({ jobId: p.jobId, progress: p.progress, stage: p.stage ?? "", ...(p.jobIndex !== undefined ? { jobIndex: p.jobIndex } : {}) })),
 };
 
 function fromWireStop(r: WireStopResponse): RecordingResult {

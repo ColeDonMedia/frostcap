@@ -1,0 +1,7 @@
+{
+  "args": {},
+  "response": {
+    "captureBorder": true,
+    "excludeOwnWindows": true
+  }
+}

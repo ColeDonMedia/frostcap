@@ -10,6 +10,7 @@
  */
 import type { AudioTrackInfo, ProjectMedia } from "../types";
 import type { Peaks } from "./wav";
+import { t } from "../i18n";
 
 interface Track {
   kind: "mic" | "system";
@@ -44,7 +45,7 @@ export class MediaEngine {
       this.tracks.push({ kind, info, el, gain: null, startTimer: null });
     }
     const onErr = (what: string) => () => {
-      this.error = `${what} could not be loaded`;
+      this.error = t("media.loadError", { what });
       this.emitFrame();
     };
     this.video?.addEventListener("error", onErr("screen.mp4"));
@@ -61,6 +62,17 @@ export class MediaEngine {
   frame(): CanvasImageSource | null {
     const v = this.video;
     return v && v.readyState >= 2 && !this.error ? v : null;
+  }
+
+  /** Playback rate for the video, webcam and audio (speed regions); pitch follows speed like the export. */
+  setRate(rate: number): void {
+    const r = Math.min(4, Math.max(0.25, rate));
+    for (const el of [this.video, this.webcam, ...this.tracks.map((t) => t.el)]) {
+      if (!el || el.playbackRate === r) continue;
+      el.preservesPitch = false; // pitch follows speed, like the export
+      (el as HTMLMediaElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch = false;
+      el.playbackRate = r;
+    }
   }
 
   webcamFrame(): CanvasImageSource | null {

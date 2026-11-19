@@ -1,0 +1,307 @@
+{
+  "canvas": {
+    "height": 1080,
+    "width": 1920
+  },
+  "createdAtMs": 1,
+  "cursorBaked": false,
+  "durationMs": 3000,
+  "edits": {
+    "annotations": [
+      {
+        "color": "#4ed2fb",
+        "cornerRadius": 0.0,
+        "dim": 0.6,
+        "endMs": 1500,
+        "fadeMs": 150,
+        "fill": false,
+        "fontSize": 40.0,
+        "h": 0.2,
+        "id": "ann-0",
+        "kind": "arrow",
+        "opacity": 1.0,
+        "startMs": 0,
+        "strength": 0.5,
+        "strokeWidth": 4.0,
+        "text": "",
+        "w": 0.3,
+        "x": 0.1,
+        "x2": 0.7,
+        "y": 0.2,
+        "y2": 0.6
+      },
+      {
+        "color": "#4ed2fb",
+        "cornerRadius": 0.0,
+        "dim": 0.6,
+        "endMs": 1600,
+        "fadeMs": 150,
+        "fill": false,
+        "fontSize": 40.0,
+        "h": 0.2,
+        "id": "ann-1",
+        "kind": "text",
+        "opacity": 1.0,
+        "startMs": 100,
+        "strength": 0.5,
+        "strokeWidth": 4.0,
+        "text": "Look here",
+        "w": 0.3,
+        "x": 0.1,
+        "x2": 0.7,
+        "y": 0.2,
+        "y2": 0.6
+      },
+      {
+        "color": "#4ed2fb",
+        "cornerRadius": 0.0,
+        "dim": 0.6,
+        "endMs": 1700,
+        "fadeMs": 150,
+        "fill": false,
+        "fontSize": 40.0,
+        "h": 0.2,
+        "id": "ann-2",
+        "kind": "rect",
+        "opacity": 1.0,
+        "startMs": 200,
+        "strength": 0.5,
+        "strokeWidth": 4.0,
+        "text": "",
+        "w": 0.3,
+        "x": 0.1,
+        "x2": 0.7,
+        "y": 0.2,
+        "y2": 0.6
+      },
+      {
+        "color": "#4ed2fb",
+        "cornerRadius": 0.0,
+        "dim": 0.6,
+        "endMs": 1800,
+        "fadeMs": 150,
+        "fill": false,
+        "fontSize": 40.0,
+        "h": 0.2,
+        "id": "ann-3",
+        "kind": "ellipse",
+        "opacity": 1.0,
+        "startMs": 300,
+        "strength": 0.5,
+        "strokeWidth": 4.0,
+        "text": "",
+        "w": 0.3,
+        "x": 0.1,
+        "x2": 0.7,
+        "y": 0.2,
+        "y2": 0.6
+      },
+      {
+        "color": "#4ed2fb",
+        "cornerRadius": 0.0,
+        "dim": 0.6,
+        "endMs": 1900,
+        "fadeMs": 150,
+        "fill": false,
+        "fontSize": 40.0,
+        "h": 0.2,
+        "id": "ann-4",
+        "kind": "highlight",
+        "opacity": 1.0,
+        "startMs": 400,
+        "strength": 0.5,
+        "strokeWidth": 4.0,
+        "text": "",
+        "w": 0.3,
+        "x": 0.1,
+        "x2": 0.7,
+        "y": 0.2,
+        "y2": 0.6
+      },
+      {
+        "color": "#4ed2fb",
+        "cornerRadius": 0.0,
+        "dim": 0.6,
+        "endMs": 2000,
+        "fadeMs": 150,
+        "fill": false,
+        "fontSize": 40.0,
+        "h": 0.2,
+        "id": "ann-5",
+        "kind": "spotlight",
+        "opacity": 1.0,
+        "startMs": 500,
+        "strength": 0.5,
+        "strokeWidth": 4.0,
+        "text": "",
+        "w": 0.3,
+        "x": 0.1,
+        "x2": 0.7,
+        "y": 0.2,
+        "y2": 0.6
+      },
+      {
+        "color": "#4ed2fb",
+        "cornerRadius": 0.0,
+        "dim": 0.6,
+        "endMs": 2100,
+        "fadeMs": 150,
+        "fill": false,
+        "fontSize": 40.0,
+        "h": 0.2,
+        "id": "ann-6",
+        "kind": "blur",
+        "opacity": 1.0,
+        "startMs": 600,
+        "strength": 0.5,
+        "strokeWidth": 4.0,
+        "text": "",
+        "w": 0.3,
+        "x": 0.1,
+        "x2": 0.7,
+        "y": 0.2,
+        "y2": 0.6
+      },
+      {
+        "color": "#4ed2fb",
+        "cornerRadius": 0.0,
+        "dim": 0.6,
+        "endMs": 2200,
+        "fadeMs": 150,
+        "fill": false,
+        "fontSize": 40.0,
+        "h": 0.2,
+        "id": "ann-7",
+        "kind": "pixelate",
+        "opacity": 1.0,
+        "startMs": 700,
+        "strength": 0.5,
+        "strokeWidth": 4.0,
+        "text": "",
+        "w": 0.3,
+        "x": 0.1,
+        "x2": 0.7,
+        "y": 0.2,
+        "y2": 0.6
+      }
+    ],
+    "captions": [],
+    "speed": [
+      {
+        "endMs": 1000,
+        "speed": 2.0,
+        "startMs": 500
+      },
+      {
+        "endMs": 2000,
+        "speed": 0.5,
+        "startMs": 1000
+      }
+    ],
+    "splits": [],
+    "style": {
+      "audio": {
+        "highPass": true,
+        "highPassHz": 80.0,
+        "micGain": 1.0,
+        "noiseGate": true,
+        "noiseGateThreshold": -50.0,
+        "normalize": true,
+        "systemGain": 1.0,
+        "targetLufs": -16.0
+      },
+      "background": "linear-gradient(135deg,#a1c4fd,#c2e9fb)",
+      "backgroundImage": {
+        "blur": 12.0,
+        "file": "background-0123456789abcdef.png",
+        "fit": "contain"
+      },
+      "captions": {
+        "background": true,
+        "enabled": true,
+        "fontSize": 40.0,
+        "position": "bottom"
+      },
+      "cornerRadius": 12.0,
+      "cursor": {
+        "motionBlur": 0.3,
+        "smoothing": 0.6,
+        "visible": true
+      },
+      "cursorScale": 1.0,
+      "cursorSmoothing": true,
+      "frame": "laptop",
+      "padding": 0.08,
+      "shadow": 0.5,
+      "showClicks": true,
+      "showKeys": false,
+      "webcam": {
+        "background": {
+          "blur": 0.5,
+          "color": "#11141c",
+          "gradient": "linear-gradient(135deg,#a1c4fd,#c2e9fb)",
+          "image": "background-0123456789abcdef.png",
+          "kind": "image"
+        },
+        "borderColor": "#4ed2fb",
+        "borderWidth": 4.0,
+        "brightness": 0.1,
+        "chromaKey": {
+          "color": "#00ff00",
+          "enabled": true,
+          "similarity": 0.4,
+          "smoothness": 0.1,
+          "spill": 0.5
+        },
+        "contrast": 1.1,
+        "enabled": true,
+        "margin": 0.05,
+        "mirror": true,
+        "position": "bottom-right",
+        "saturation": 1.2,
+        "shadow": 0.6,
+        "shape": "circle",
+        "size": 0.22
+      }
+    },
+    "trims": [],
+    "zoomSegments": []
+  },
+  "fps": 60,
+  "media": {
+    "screen": "screen.mp4"
+  },
+  "name": "Editor v2 fixture",
+  "source": {
+    "bounds": {
+      "height": 1080,
+      "width": 1920,
+      "x": 0,
+      "y": 0
+    },
+    "kind": "monitor",
+    "name": "Display"
+  },
+  "status": "complete",
+  "tracks": {
+    "clicks": [
+      {
+        "button": "left",
+        "state": "down",
+        "tMs": 5,
+        "x": 1,
+        "y": 2
+      }
+    ],
+    "cursor": [
+      {
+        "tMs": 0,
+        "x": 1,
+        "y": 2
+      }
+    ],
+    "focus": [],
+    "keys": []
+  },
+  "version": 1
+}

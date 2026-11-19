@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CAPTION_MAX_CHARS, CAPTION_MAX_LINES, activeCaption, canvasToContent, ease, effectiveCursor, webcamVisible, wrapCaption, zoomAt } from "./render";
+import { CAPTION_MAX_CHARS, CAPTION_MAX_LINES, activeCaption, canvasToContent, contentToCanvas, ease, effectiveCursor, webcamVisible, wrapCaption, zoomAt } from "./render";
 import type { Project, ZoomSegment } from "../types";
 
 describe("wrapCaption (security L1: bounded, linear, matches the Rust renderer)", () => {
@@ -135,5 +135,30 @@ describe("zoomAt parity with zoom_at()", () => {
   it("caps the ramp at half the segment and handles zero transition", () => {
     expect(zoomAt([seg(0, 400, 1000)], 200).e).toBe(1);
     expect(zoomAt([seg(0, 400, 0)], 0).e).toBe(1);
+  });
+});
+
+describe("contentToCanvas (forward map for overlays) inverts canvasToContent", () => {
+  const seg: ZoomSegment = { id: "z", start: 0, end: 4000, cx: 0.3, cy: 0.4, scale: 2, easing: "linear", transitionMs: 0 };
+  const p = { media: { width: 1920, height: 1080 }, style: { padding: 8, frame: "laptop" }, zoomSegments: [seg] } as unknown as Project;
+  it("round-trips inside the visible area, zoomed or not", () => {
+    for (const proj of [p, { ...p, zoomSegments: [] } as Project]) {
+      const c = contentToCanvas(0.4, 0.45, 1600, 900, proj, 2000);
+      const back = canvasToContent(c.x, c.y, 1600, 900, proj, 2000);
+      expect(back.x).toBeCloseTo(0.4, 6);
+      expect(back.y).toBeCloseTo(0.45, 6);
+    }
+  });
+  it("device frames have no title bar and leave room for the bezel and laptop base inside the canvas", () => {
+    const flat = { ...p, zoomSegments: [], style: { padding: 0, frame: "laptop" } } as unknown as Project;
+    const tl = contentToCanvas(0, 0, 1920, 1080, flat, 0);
+    const br = contentToCanvas(1, 1, 1920, 1080, flat, 0);
+    // bezel (14) + base overhang (46) at 1080p on each side, never touching the canvas edge
+    expect(tl.x).toBeGreaterThanOrEqual(60);
+    expect(1920 - br.x).toBeGreaterThanOrEqual(60);
+    expect(tl.y).toBeGreaterThanOrEqual(14);
+    expect(1080 - br.y).toBeGreaterThanOrEqual(30);
+    const tall = contentToCanvas(0, 0, 608, 1080, flat, 0);
+    expect(tall.x).toBeGreaterThanOrEqual(60 * (1080 / 1080));
   });
 });

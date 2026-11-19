@@ -42,6 +42,124 @@ pub enum Frame {
     Windows,
     /// Traffic lights.
     MacOs,
+    /// Laptop mockup (bezel + keyboard base), drawn in the shader.
+    Laptop,
+    /// Phone mockup (thick rounded bezel + camera pill), drawn in the shader.
+    Phone,
+}
+
+/// How the background image fills the output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BgFit {
+    /// Fill the output, cropping the overflow.
+    Cover,
+    /// Fit inside; the gradient shows in the letterbox.
+    Contain,
+}
+
+/// Annotation shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnnKind {
+    /// Arrow (x,y) -> (x2,y2).
+    Arrow,
+    /// Text in a box.
+    Text,
+    /// Rectangle.
+    Rect,
+    /// Ellipse.
+    Ellipse,
+    /// Translucent marker.
+    Highlight,
+    /// Darken outside the rectangle.
+    Spotlight,
+    /// Blur inside the rectangle.
+    Blur,
+    /// Pixelate inside the rectangle.
+    Pixelate,
+}
+
+/// An annotation (source clock, content-normalized geometry).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Ann {
+    /// Editor id.
+    pub id: String,
+    /// Shape.
+    pub kind: AnnKind,
+    /// Start (ms).
+    pub start: f64,
+    /// End (ms).
+    pub end: f64,
+    /// x, y, w, h, x2, y2 (0..1 of the screen content).
+    pub x: f64,
+    /// Top / start y.
+    pub y: f64,
+    /// Width.
+    pub w: f64,
+    /// Height.
+    pub h: f64,
+    /// Arrow end x.
+    pub x2: f64,
+    /// Arrow end y.
+    pub y2: f64,
+    /// sRGB colour.
+    pub color: [f64; 3],
+    /// Stroke width, px at 1080p.
+    pub stroke: f64,
+    /// Filled.
+    pub fill: bool,
+    /// Text.
+    pub text: String,
+    /// Font px at 1080p.
+    pub font: f64,
+    /// Opacity.
+    pub opacity: f64,
+    /// Blur / pixel size amount.
+    pub strength: f64,
+    /// Spotlight dim.
+    pub dim: f64,
+    /// Corner radius, px at 1080p.
+    pub radius: f64,
+    /// Fade in/out (ms).
+    pub fade: f64,
+}
+
+/// Chroma key settings.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Key {
+    /// Key colour (sRGB 0..1).
+    pub color: [f64; 3],
+    /// Similarity 0..1.
+    pub similarity: f64,
+    /// Smoothness 0..1.
+    pub smoothness: f64,
+    /// Spill suppression 0..1.
+    pub spill: f64,
+}
+
+/// What replaces keyed-out webcam pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WebcamBg {
+    /// Transparent.
+    None,
+    /// Solid sRGB RGBA.
+    Color([f64; 4]),
+    /// Gradient.
+    Gradient(Gradient),
+    /// Image file (project folder).
+    Image(PathBuf),
+    /// Blurred camera frame (0..1).
+    Blur(f64),
+}
+
+/// Background image drawn over the gradient.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BgImage {
+    /// Absolute path inside the project folder.
+    pub path: PathBuf,
+    /// Fit mode.
+    pub fit: BgFit,
+    /// Gaussian sigma, px at 1080p.
+    pub blur: f64,
 }
 
 /// Webcam bubble shape.
@@ -128,6 +246,8 @@ pub struct AudioRef {
     pub path: PathBuf,
     /// Where sample 0 sits on the video clock (ms, may be negative).
     pub offset_ms: f64,
+    /// `(sampleRate, channels)` the project declares; a WAV that disagrees is refused.
+    pub expect: Option<(u32, u16)>,
 }
 
 /// Audio post-processing settings.
@@ -170,6 +290,8 @@ impl AudioStyle {
 pub struct Style {
     /// Background gradient.
     pub background: Gradient,
+    /// Background image over the gradient.
+    pub background_image: Option<BgImage>,
     /// Padding, percent of `min(W, H*1.78)`.
     pub padding: f64,
     /// Corner radius, px at 1080p.
@@ -196,6 +318,26 @@ pub struct Style {
     pub webcam_size: f64,
     /// Webcam corner: (left, top).
     pub webcam_corner: (bool, bool),
+    /// Webcam distance from the output edge, fraction of output height.
+    pub webcam_margin: f64,
+    /// Webcam border width, px at 1080p (0 = none).
+    pub webcam_border_width: f64,
+    /// Flip the camera horizontally.
+    pub webcam_mirror: bool,
+    /// Camera brightness offset.
+    pub webcam_brightness: f64,
+    /// Camera contrast.
+    pub webcam_contrast: f64,
+    /// Camera saturation.
+    pub webcam_saturation: f64,
+    /// Bubble shadow strength 0..1.
+    pub webcam_shadow: f64,
+    /// Chroma key (None = off).
+    pub webcam_key: Option<Key>,
+    /// Keyed-out replacement.
+    pub webcam_bg: WebcamBg,
+    /// Webcam border colour (sRGB 0..1 RGBA).
+    pub webcam_border_color: [f64; 4],
     /// Audio processing.
     pub audio: AudioStyle,
     /// Captions on.
@@ -216,6 +358,7 @@ impl Default for Style {
         Self {
             background: parse_background_str("linear-gradient(135deg,#a1c4fd,#c2e9fb)")
                 .expect("default gradient"),
+            background_image: None,
             padding: 8.0,
             radius: 12.0,
             shadow: 50.0,
@@ -229,6 +372,16 @@ impl Default for Style {
             webcam_shape: WebcamShape::Circle,
             webcam_size: 0.22,
             webcam_corner: (false, false),
+            webcam_margin: frostcap_project::WebcamStyle::DEFAULT_MARGIN,
+            webcam_border_width: 0.0,
+            webcam_border_color: [1.0; 4],
+            webcam_mirror: false,
+            webcam_brightness: 0.0,
+            webcam_contrast: 1.0,
+            webcam_saturation: 1.0,
+            webcam_shadow: 0.4,
+            webcam_key: None,
+            webcam_bg: WebcamBg::None,
             audio: AudioStyle::OFF,
             captions_enabled: true,
             caption_font: 40.0,
@@ -272,6 +425,8 @@ pub struct RenderProject {
     pub pieces: Vec<Piece>,
     /// Captions.
     pub captions: Vec<Cue>,
+    /// Annotations, sorted by start.
+    pub annotations: Vec<Ann>,
     /// Style.
     pub style: Style,
     /// The OS cursor is already in `screen.mp4` (then no cursor is re-rendered).
@@ -394,9 +549,19 @@ pub fn parse_background_str(s: &str) -> Option<Gradient> {
     })
 }
 
-fn style_from(s: &frostcap_project::Style) -> Style {
+fn style_from(s: &frostcap_project::Style, dir: &Path) -> Style {
     use frostcap_project as fp;
-    let mut st = Style::default();
+    let mut st = Style {
+        background_image: s.background_image.as_ref().map(|b| BgImage {
+            path: dir.join(&b.file),
+            fit: match b.fit {
+                fp::BackgroundFit::Cover => BgFit::Cover,
+                fp::BackgroundFit::Contain => BgFit::Contain,
+            },
+            blur: b.blur.clamp(0.0, 100.0),
+        }),
+        ..Style::default()
+    };
     if let Some(bg) = parse_background_str(&s.background) {
         st.background = bg;
     }
@@ -410,6 +575,8 @@ fn style_from(s: &frostcap_project::Style) -> Style {
         fp::WindowFrame::Minimal => Frame::Minimal,
         fp::WindowFrame::Windows => Frame::Windows,
         fp::WindowFrame::MacOs => Frame::MacOs,
+        fp::WindowFrame::Laptop => Frame::Laptop,
+        fp::WindowFrame::Phone => Frame::Phone,
     };
     st.cursor_visible = s.cursor.visible;
     st.cursor_size = s.cursor_scale.clamp(0.1, 8.0);
@@ -430,6 +597,43 @@ fn style_from(s: &frostcap_project::Style) -> Style {
         fp::WebcamShape::Square => WebcamShape::Square,
     };
     st.webcam_size = w.size.clamp(0.05, 0.6);
+    st.webcam_margin = w.margin.clamp(0.0, 0.2);
+    st.webcam_border_width = w.border_width.clamp(0.0, 20.0);
+    st.webcam_mirror = w.mirror;
+    st.webcam_brightness = w.brightness.clamp(-1.0, 1.0);
+    st.webcam_contrast = w.contrast.clamp(0.0, 2.0);
+    st.webcam_saturation = w.saturation.clamp(0.0, 2.0);
+    st.webcam_shadow = w.shadow.clamp(0.0, 1.0);
+    let rgb = |c: fp::Rgba| {
+        [
+            f64::from(c.0[0]) / 255.0,
+            f64::from(c.0[1]) / 255.0,
+            f64::from(c.0[2]) / 255.0,
+        ]
+    };
+    st.webcam_key = w.chroma_key.enabled.then(|| Key {
+        color: rgb(w.chroma_key.color),
+        similarity: w.chroma_key.similarity.clamp(0.0, 1.0),
+        smoothness: w.chroma_key.smoothness.clamp(0.0, 1.0),
+        spill: w.chroma_key.spill.clamp(0.0, 1.0),
+    });
+    let wb = &w.background;
+    st.webcam_bg = match wb.kind {
+        fp::WebcamBackgroundKind::None => WebcamBg::None,
+        fp::WebcamBackgroundKind::Color => {
+            let c = wb.color.0.map(|v| f64::from(v) / 255.0);
+            WebcamBg::Color(c)
+        }
+        fp::WebcamBackgroundKind::Gradient => {
+            parse_background_str(&wb.gradient).map_or(WebcamBg::None, WebcamBg::Gradient)
+        }
+        fp::WebcamBackgroundKind::Image => wb
+            .image
+            .as_ref()
+            .map_or(WebcamBg::None, |f| WebcamBg::Image(dir.join(f))),
+        fp::WebcamBackgroundKind::Blur => WebcamBg::Blur(wb.blur.clamp(0.0, 1.0)),
+    };
+    st.webcam_border_color = w.border_color.0.map(|c| f64::from(c) / 255.0);
     st.webcam_corner = match w.position {
         fp::Corner::TopLeft => (true, true),
         fp::Corner::TopRight => (false, true),
@@ -453,6 +657,52 @@ fn style_from(s: &frostcap_project::Style) -> Style {
     st.caption_top = c.position == fp::CaptionPosition::Top;
     st.caption_bg = c.background;
     st
+}
+
+/// Annotations that can be shown (positive duration), in time order.
+fn annotations_from(list: &[frostcap_project::Annotation]) -> Vec<Ann> {
+    use frostcap_project::AnnotationKind as K;
+    let mut out: Vec<Ann> = list
+        .iter()
+        .filter(|a| a.end_ms > a.start_ms)
+        .map(|a| Ann {
+            id: a.id.clone(),
+            kind: match a.kind {
+                K::Arrow => AnnKind::Arrow,
+                K::Text => AnnKind::Text,
+                K::Rect => AnnKind::Rect,
+                K::Ellipse => AnnKind::Ellipse,
+                K::Highlight => AnnKind::Highlight,
+                K::Spotlight => AnnKind::Spotlight,
+                K::Blur => AnnKind::Blur,
+                K::Pixelate => AnnKind::Pixelate,
+            },
+            start: a.start_ms as f64,
+            end: a.end_ms as f64,
+            x: a.x.clamp(0.0, 1.0),
+            y: a.y.clamp(0.0, 1.0),
+            w: a.w.clamp(0.0, 1.0),
+            h: a.h.clamp(0.0, 1.0),
+            x2: a.x2.clamp(0.0, 1.0),
+            y2: a.y2.clamp(0.0, 1.0),
+            color: [
+                f64::from(a.color.0[0]) / 255.0,
+                f64::from(a.color.0[1]) / 255.0,
+                f64::from(a.color.0[2]) / 255.0,
+            ],
+            stroke: a.stroke_width.clamp(1.0, 40.0),
+            fill: a.fill,
+            text: a.text.clone(),
+            font: a.font_size.clamp(8.0, 200.0),
+            opacity: a.opacity.clamp(0.0, 1.0),
+            strength: a.strength.clamp(0.0, 1.0),
+            dim: a.dim.clamp(0.0, 1.0),
+            radius: a.corner_radius.clamp(0.0, 200.0),
+            fade: a.fade_ms.min(2000) as f64,
+        })
+        .collect();
+    out.sort_by(|a, b| a.start.total_cmp(&b.start));
+    out
 }
 
 /// Cues that can be shown (positive duration, some visible text), in time order.
@@ -493,6 +743,7 @@ fn audio_ref(dir: &Path, t: Option<&frostcap_project::AudioTrack>) -> Option<Aud
     t.map(|t| AudioRef {
         path: dir.join(&t.file),
         offset_ms: t.offset_ms as f64,
+        expect: Some((t.sample_rate, t.channels)),
     })
 }
 
@@ -582,9 +833,13 @@ impl RenderProject {
             clicks,
             keys,
             zooms,
-            pieces: pieces_from_trims(&p.edits.trims, duration_ms),
+            pieces: split_by_speed(
+                pieces_from_trims(&p.edits.trims, duration_ms),
+                &p.edits.speed,
+            ),
             captions: cues_from(&p.edits.captions),
-            style: style_from(&p.edits.style),
+            annotations: annotations_from(&p.edits.annotations),
+            style: style_from(&p.edits.style, dir),
             cursor_baked: p.cursor_baked,
         })
     }
@@ -629,6 +884,7 @@ impl RenderProject {
             && self.pieces[0].src_end >= self.duration_ms - 0.5
             && (self.pieces[0].speed - 1.0).abs() < 1e-9;
         !self.zooms.is_empty()
+            || !self.annotations.is_empty()
             || !identity
             || (self.style.captions_enabled && !self.captions.is_empty())
     }
@@ -660,10 +916,52 @@ impl RenderProject {
                 speed: 1.0,
             }],
             captions: vec![],
+            annotations: vec![],
             style: Style::default(),
             cursor_baked: false,
         }
     }
+}
+
+/// Split kept pieces at the boundaries of the (validated, non-overlapping) speed
+/// segments and give each part its speed; parts outside every segment play at
+/// 1x. Neighbouring parts with equal speed are merged, so a no-op segment leaves
+/// the timeline untouched.
+fn split_by_speed(pieces: Vec<Piece>, speed: &[frostcap_project::SpeedSegment]) -> Vec<Piece> {
+    let mut segs: Vec<(f64, f64, f64)> = speed
+        .iter()
+        .filter(|s| s.end_ms > s.start_ms && s.speed.is_finite())
+        .map(|s| (s.start_ms as f64, s.end_ms as f64, s.speed.clamp(0.25, 4.0)))
+        .collect();
+    segs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut out: Vec<Piece> = Vec::with_capacity(pieces.len() + segs.len());
+    let mut push = |src_start: f64, src_end: f64, speed: f64| {
+        if src_end <= src_start {
+            return;
+        }
+        match out.last_mut() {
+            Some(l) if l.speed == speed && l.src_end == src_start => l.src_end = src_end,
+            _ => out.push(Piece {
+                src_start,
+                src_end,
+                speed,
+            }),
+        }
+    };
+    for p in pieces {
+        let mut cur = p.src_start;
+        let mut i = segs.partition_point(|s| s.1 <= cur);
+        while cur < p.src_end && i < segs.len() && segs[i].0 < p.src_end {
+            let (a, b, sp) = segs[i];
+            push(cur, a.max(cur), p.speed);
+            let end = b.min(p.src_end);
+            push(a.max(cur), end, sp);
+            cur = end;
+            i += 1;
+        }
+        push(cur, p.src_end, p.speed);
+    }
+    out
 }
 
 /// The kept source pieces: the complement of the (possibly overlapping) trims.
@@ -959,6 +1257,7 @@ mod tests {
             shape: PShape::Rounded,
             size: 0.3,
             position: Corner::TopLeft,
+            ..WebcamStyle::default()
         };
         s.audio = PAudio {
             noise_gate: false,
@@ -1220,5 +1519,219 @@ mod tests {
         let m = model(&p);
         let spans: Vec<(f64, f64)> = m.pieces.iter().map(|q| (q.src_start, q.src_end)).collect();
         assert_eq!(spans, vec![(0.0, 1000.0), (6000.0, 10000.0)]);
+    }
+
+    fn seg(start_ms: u64, end_ms: u64, speed: f64) -> frostcap_project::SpeedSegment {
+        frostcap_project::SpeedSegment {
+            start_ms,
+            end_ms,
+            speed,
+        }
+    }
+
+    #[test]
+    fn speed_segments_split_the_kept_pieces() {
+        let mut p = core_project(); // 10 s, trim 2000..4000
+        p.edits.speed = vec![seg(1000, 3000, 2.0), seg(5000, 6000, 0.5)];
+        let m = model(&p);
+        let got: Vec<(f64, f64, f64)> = m
+            .pieces
+            .iter()
+            .map(|q| (q.src_start, q.src_end, q.speed))
+            .collect();
+        // The 2x segment is cut by the trim at 2000; 3000..4000 is trimmed anyway.
+        assert_eq!(
+            got,
+            vec![
+                (0.0, 1000.0, 1.0),
+                (1000.0, 2000.0, 2.0),
+                (4000.0, 5000.0, 1.0),
+                (5000.0, 6000.0, 0.5),
+                (6000.0, 10000.0, 1.0),
+            ]
+        );
+        assert_eq!(m.output_ms(), 1000.0 + 500.0 + 1000.0 + 2000.0 + 4000.0);
+        assert!(m.has_timeline_edits());
+        // Output -> source mapping inside the 2x and 0.5x pieces.
+        assert_eq!(m.source_time(1000.0 + 250.0), 1500.0);
+        assert_eq!(m.source_time(2500.0 + 1000.0), 5000.0 + 500.0);
+    }
+
+    #[test]
+    fn speed_ramp_is_continuous_and_monotonic() {
+        let mut p = core_project();
+        p.edits.trims.clear();
+        p.duration_ms = 4000;
+        // Ease from 1x to 4x in four adjacent 500 ms steps.
+        p.edits.speed = vec![
+            seg(1000, 1500, 1.0),
+            seg(1500, 2000, 2.0),
+            seg(2000, 2500, 3.0),
+            seg(2500, 3000, 4.0),
+        ];
+        let m = model(&p);
+        assert_eq!(
+            m.output_ms(),
+            1000.0 + 500.0 + 250.0 + 500.0 / 3.0 + 125.0 + 1000.0
+        );
+        let mut last = -1.0;
+        for i in 0..=(m.output_ms() as usize) {
+            let s = m.source_time(i as f64);
+            assert!(s >= last, "source time went backwards at {i}: {s} < {last}");
+            last = s;
+        }
+        // Boundary between the 2x and 3x steps maps to source 2000.
+        let t = 1000.0 + 500.0 + 250.0;
+        assert!((m.source_time(t) - 2000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn unit_speed_segments_do_not_count_as_edits_and_neighbours_merge() {
+        let mut p = core_project();
+        p.edits.trims.clear();
+        p.edits.zoom_segments.clear();
+        p.edits.speed = vec![seg(1000, 2000, 1.0)];
+        let m = model(&p);
+        assert_eq!(m.pieces.len(), 1, "same-speed neighbours are merged");
+        assert!(!m.has_timeline_edits());
+        // A speed segment beyond the recording is ignored.
+        p.edits.speed = vec![seg(20_000, 30_000, 2.0)];
+        let m = model(&p);
+        assert_eq!(m.pieces.len(), 1);
+        assert_eq!(m.output_ms(), 10_000.0);
+    }
+
+    #[test]
+    fn device_frames_and_webcam_extras_reach_the_model() {
+        use frostcap_project::{Rgba, WindowFrame};
+        let mut p = core_project();
+        p.edits.style.frame = WindowFrame::Laptop;
+        assert_eq!(model(&p).style.frame, Frame::Laptop);
+        p.edits.style.frame = WindowFrame::Phone;
+        assert_eq!(model(&p).style.frame, Frame::Phone);
+        let d = model(&p).style;
+        assert_eq!(d.webcam_margin, 28.0 / 1080.0);
+        assert_eq!(d.webcam_border_width, 0.0);
+        p.edits.style.webcam.margin = 0.1;
+        p.edits.style.webcam.border_width = 10.0;
+        p.edits.style.webcam.border_color = Rgba([255, 0, 0, 128]);
+        let s = model(&p).style;
+        assert_eq!((s.webcam_margin, s.webcam_border_width), (0.1, 10.0));
+        assert_eq!(s.webcam_border_color[0], 1.0);
+        assert!((s.webcam_border_color[3] - 128.0 / 255.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn background_image_resolves_inside_the_project_folder() {
+        use frostcap_project::{BackgroundFit, BackgroundImage};
+        let mut p = core_project();
+        assert!(model(&p).style.background_image.is_none());
+        p.edits.style.background_image = Some(BackgroundImage {
+            file: "bg.png".into(),
+            fit: BackgroundFit::Contain,
+            blur: 20.0,
+        });
+        let m = model(&p);
+        let b = m.style.background_image.unwrap();
+        assert_eq!(b.path, Path::new("C:/p.frostcap").join("bg.png"));
+        assert_eq!((b.fit, b.blur), (BgFit::Contain, 20.0));
+        // A hostile name never reaches the model.
+        p.edits.style.background_image.as_mut().unwrap().file = "../x.png".into();
+        assert!(RenderProject::from_project(Path::new("C:/p.frostcap"), &p).is_err());
+    }
+
+    #[test]
+    fn webcam_effects_reach_the_model() {
+        use frostcap_project::{Rgba, WebcamBackgroundKind};
+        let mut p = core_project();
+        let d = model(&p).style;
+        assert!(!d.webcam_mirror && d.webcam_key.is_none());
+        assert_eq!(
+            (
+                d.webcam_brightness,
+                d.webcam_contrast,
+                d.webcam_saturation,
+                d.webcam_shadow
+            ),
+            (0.0, 1.0, 1.0, 0.4)
+        );
+        assert_eq!(d.webcam_bg, WebcamBg::None);
+        let w = &mut p.edits.style.webcam;
+        w.mirror = true;
+        w.brightness = 0.25;
+        w.contrast = 1.5;
+        w.saturation = 0.0;
+        w.shadow = 0.9;
+        w.chroma_key.enabled = true;
+        w.chroma_key.color = Rgba([0, 255, 0, 255]);
+        w.chroma_key.similarity = 0.3;
+        w.background.kind = WebcamBackgroundKind::Color;
+        w.background.color = Rgba([255, 0, 0, 255]);
+        let s = model(&p).style;
+        assert!(s.webcam_mirror);
+        assert_eq!(
+            (s.webcam_brightness, s.webcam_contrast, s.webcam_saturation),
+            (0.25, 1.5, 0.0)
+        );
+        let k = s.webcam_key.unwrap();
+        assert_eq!((k.color, k.similarity), ([0.0, 1.0, 0.0], 0.3));
+        assert_eq!(s.webcam_bg, WebcamBg::Color([1.0, 0.0, 0.0, 1.0]));
+        // Key off: the background kind is irrelevant, no key is passed on.
+        p.edits.style.webcam.chroma_key.enabled = false;
+        assert!(model(&p).style.webcam_key.is_none());
+        p.edits.style.webcam.background.kind = WebcamBackgroundKind::Image;
+        p.edits.style.webcam.background.image = Some("cam.png".into());
+        p.edits.style.webcam.chroma_key.enabled = true;
+        assert_eq!(
+            model(&p).style.webcam_bg,
+            WebcamBg::Image(Path::new("C:/p.frostcap").join("cam.png"))
+        );
+        p.edits.style.webcam.background.kind = WebcamBackgroundKind::Gradient;
+        assert!(matches!(model(&p).style.webcam_bg, WebcamBg::Gradient(_)));
+        p.edits.style.webcam.background.kind = WebcamBackgroundKind::Blur;
+        p.edits.style.webcam.background.blur = 0.8;
+        assert_eq!(model(&p).style.webcam_bg, WebcamBg::Blur(0.8));
+    }
+
+    #[test]
+    fn annotations_reach_the_model_sorted_and_without_empty_ones() {
+        use frostcap_project::{Annotation, AnnotationKind, Rgba};
+        let mut p = core_project();
+        let a = |id: &str, kind, s, e| Annotation {
+            id: id.into(),
+            kind,
+            start_ms: s,
+            end_ms: e,
+            x: 0.1,
+            y: 0.2,
+            w: 0.3,
+            h: 0.4,
+            color: Rgba([255, 128, 0, 255]),
+            ..Annotation::default()
+        };
+        p.edits.annotations = vec![
+            a("late", AnnotationKind::Rect, 5000, 6000),
+            a("zero", AnnotationKind::Blur, 100, 100),
+            a("early", AnnotationKind::Spotlight, 1000, 2000),
+        ];
+        let m = model(&p);
+        let ids: Vec<&str> = m.annotations.iter().map(|x| x.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["early", "late"],
+            "sorted by start, zero-length dropped"
+        );
+        let e = &m.annotations[0];
+        assert_eq!(e.kind, AnnKind::Spotlight);
+        assert_eq!((e.x, e.y, e.w, e.h), (0.1, 0.2, 0.3, 0.4));
+        assert!((e.color[1] - 128.0 / 255.0).abs() < 1e-9);
+        assert_eq!((e.start, e.end), (1000.0, 2000.0));
+        assert!(m.has_timeline_edits() || !m.annotations.is_empty());
+        // Annotations alone make a raw copy impossible.
+        let mut q = core_project();
+        q.edits.zoom_segments.clear();
+        q.edits.trims.clear();
+        q.edits.annotations = vec![a("x", AnnotationKind::Rect, 0, 10)];
+        assert!(model(&q).has_timeline_edits());
     }
 }

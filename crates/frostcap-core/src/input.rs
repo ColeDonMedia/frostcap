@@ -85,6 +85,9 @@ pub struct InputOptions {
     pub titles: bool,
     /// Recording timeline: nothing is sampled while it is paused.
     pub timeline: Option<Arc<Timeline>>,
+    /// Canvas pixels per desktop pixel (1.0; below 1 when an all-displays canvas was
+    /// scaled down to fit the encoder). Cursor and focus coordinates are multiplied by it.
+    pub scale: f64,
 }
 
 /// One line of the `input.jsonl` crash-recovery sidecar (raw QPC hns timestamps).
@@ -254,6 +257,7 @@ impl Default for InputOptions {
             sidecar: None,
             titles: false,
             timeline: None,
+            scale: 1.0,
         }
     }
 }
@@ -483,6 +487,15 @@ fn window_title(hwnd: HWND) -> String {
     String::from_utf16_lossy(&buf[..n.max(0) as usize])
 }
 
+/// Multiply a coordinate by the canvas scale (identity at 1.0).
+fn scaled(v: i32, scale: f64) -> i32 {
+    if scale == 1.0 {
+        v
+    } else {
+        (f64::from(v) * scale).round() as i32
+    }
+}
+
 /// One poll of the OS input state (absolute screen coordinates).
 #[derive(Clone, Debug)]
 pub(crate) struct Snapshot {
@@ -497,6 +510,8 @@ pub(crate) struct Snapshot {
     pub mods: Modifiers,
     /// Foreground window (handle, absolute rect).
     pub foreground: Option<(usize, Rect)>,
+    /// Canvas pixels per desktop pixel.
+    pub scale: f64,
 }
 
 /// Pure per-tick event extraction (unit-testable without the OS).
@@ -548,7 +563,7 @@ impl Sampler {
         let (ox, oy) = s.origin;
         let ts = s.ts;
         if let Some((x, y)) = s.cursor {
-            let p = (x - ox, y - oy);
+            let p = (scaled(x - ox, s.scale), scaled(y - oy, s.scale));
             if !paused && self.last_pos != Some(p) && out.cursor.len() < limits::MAX_CURSOR_SAMPLES
             {
                 out.cursor.push(Stamped { ts, ev: p });
@@ -598,9 +613,10 @@ impl Sampler {
         }
         if let Some((h, r)) = s.foreground {
             let rel = Rect {
-                x: r.x - ox,
-                y: r.y - oy,
-                ..r
+                x: scaled(r.x - ox, s.scale),
+                y: scaled(r.y - oy, s.scale),
+                width: scaled(r.width, s.scale),
+                height: scaled(r.height, s.scale),
             };
             let changed_window = self.last_fg.is_none_or(|(lh, _)| lh != h);
             let moved = self.last_fg.is_some_and(|(lh, lr)| lh == h && lr != rel);
@@ -625,7 +641,7 @@ impl Sampler {
     }
 }
 
-fn poll(keys: bool, origin: (i32, i32)) -> Snapshot {
+fn poll(keys: bool, origin: (i32, i32), scale: f64) -> Snapshot {
     let ts = clock::now_hns();
     let mut pt = POINT::default();
     // SAFETY: valid out param.
@@ -658,6 +674,7 @@ fn poll(keys: bool, origin: (i32, i32)) -> Snapshot {
             Modifiers::default()
         },
         foreground,
+        scale,
     }
 }
 
@@ -667,7 +684,11 @@ fn run(origin: SourceOrigin, opts: InputOptions, stop: &AtomicBool) -> RawInput 
     let mut sidecar = opts.sidecar.as_deref().and_then(SidecarWriter::open);
     let keys = opts.keys != KeyCapture::Off;
     let mut last_origin = origin.origin().unwrap_or((0, 0));
-    let mut sampler = Sampler::new(opts.keys, opts.titles, &poll(keys, last_origin).keys);
+    let mut sampler = Sampler::new(
+        opts.keys,
+        opts.titles,
+        &poll(keys, last_origin, opts.scale).keys,
+    );
     let title_of = |h: usize| window_title(HWND(h as *mut _));
 
     while !stop.load(Ordering::Acquire) {
@@ -676,7 +697,7 @@ fn run(origin: SourceOrigin, opts: InputOptions, stop: &AtomicBool) -> RawInput 
             last_origin = o;
         }
         let paused = opts.timeline.as_ref().is_some_and(|t| t.is_paused());
-        let snap = poll(keys, last_origin);
+        let snap = poll(keys, last_origin, opts.scale);
         sampler.tick(&snap, paused, title_of, &mut out);
 
         if !paused
@@ -769,7 +790,31 @@ mod tests {
             keys: [(false, false); 256],
             mods: Modifiers::default(),
             foreground: None,
+            scale: 1.0,
         }
+    }
+
+    #[test]
+    fn a_scaled_canvas_scales_cursor_and_focus_coordinates() {
+        let mut s = snap(1);
+        s.origin = (-100, 0);
+        s.cursor = Some((900, 500));
+        s.scale = 0.8;
+        s.foreground = Some((
+            1,
+            Rect {
+                x: 100,
+                y: 0,
+                width: 500,
+                height: 250,
+            },
+        ));
+        let mut sampler = Sampler::new(KeyCapture::Off, false, &[(false, false); 256]);
+        let mut out = RawInput::default();
+        sampler.tick(&s, false, |_| String::new(), &mut out);
+        assert_eq!(out.cursor[0].ev, (800, 400));
+        let r = out.focus[0].ev.2;
+        assert_eq!((r.x, r.y, r.width, r.height), (160, 0, 400, 200));
     }
 
     #[test]
@@ -985,6 +1030,7 @@ mod tests {
                 sidecar: Some(side.clone()),
                 titles: false,
                 timeline: None,
+                scale: 1.0,
             },
         )
         .unwrap();

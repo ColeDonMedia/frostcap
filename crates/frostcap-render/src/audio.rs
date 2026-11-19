@@ -60,22 +60,42 @@ fn u32le(b: &[u8], i: usize) -> u32 {
     u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]])
 }
 
-/// Parse RIFF/WAVE: PCM 8/16/24/32-bit, IEEE float 32/64, WAVE_FORMAT_EXTENSIBLE.
-/// A truncated `data` chunk (crashed recording) uses whatever bytes exist.
+/// Parse RIFF/WAVE: PCM 8/16/24/32-bit, IEEE float 32/64, WAVE_FORMAT_EXTENSIBLE,
+/// and RF64/BW64 (files over 4 GiB: the 64-bit `data` size lives in the leading
+/// `ds64` chunk and the 32-bit size field reads 0xFFFFFFFF). A truncated `data`
+/// chunk (crashed recording) uses whatever bytes exist.
 pub fn parse_wav(b: &[u8]) -> std::result::Result<(u32, Stereo), String> {
-    if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+    let rf64 = b.len() >= 4 && matches!(&b[0..4], b"RF64" | b"BW64");
+    if b.len() < 12 || !(rf64 || &b[0..4] == b"RIFF") || &b[8..12] != b"WAVE" {
         return Err("not a RIFF/WAVE file".into());
     }
     let mut i = 12;
     let mut fmt: Option<(u16, u16, u32, u16)> = None;
     let mut data: Option<&[u8]> = None;
+    let mut ds64_data: Option<u64> = None;
     while i + 8 <= b.len() {
         let id = &b[i..i + 4];
-        let size = u32le(b, i + 4) as usize;
+        if rf64 && i == 12 && id != b"ds64" {
+            return Err("RF64 file without a ds64 chunk".into());
+        }
+        let mut size = u32le(b, i + 4) as usize;
         let body_start = i + 8;
+        if id == b"data"
+            && size == u32::MAX as usize
+            && let Some(d) = ds64_data
+        {
+            size = usize::try_from(d).unwrap_or(usize::MAX);
+        }
         let body_end = body_start.saturating_add(size).min(b.len());
         let body = &b[body_start..body_end];
-        if id == b"fmt " && body.len() >= 16 {
+        if id == b"ds64" {
+            if body.len() < 28 {
+                return Err("ds64 chunk is too short".into());
+            }
+            ds64_data = Some(u64::from_le_bytes([
+                body[8], body[9], body[10], body[11], body[12], body[13], body[14], body[15],
+            ]));
+        } else if id == b"fmt " && body.len() >= 16 {
             let mut tag = u16le(body, 0);
             if tag == 0xFFFE && body.len() >= 26 {
                 tag = u16le(body, 24); // first two bytes of the SubFormat GUID
@@ -87,7 +107,7 @@ pub fn parse_wav(b: &[u8]) -> std::result::Result<(u32, Stereo), String> {
                 break;
             }
         }
-        i = body_start + size + (size & 1);
+        i = body_start.saturating_add(size).saturating_add(size & 1);
     }
     let (tag, ch, rate, bits) = fmt.ok_or("missing fmt chunk")?;
     let data = data.ok_or("missing data chunk")?;
@@ -148,7 +168,7 @@ pub fn resample(rate: u32, s: Stereo) -> Stereo {
 
 /// Direct-form-I biquad.
 #[derive(Clone, Copy)]
-struct Biquad {
+pub(crate) struct Biquad {
     b: [f64; 3],
     a: [f64; 2],
     x: [f64; 2],
@@ -156,7 +176,7 @@ struct Biquad {
 }
 
 impl Biquad {
-    fn new(b: [f64; 3], a: [f64; 2]) -> Self {
+    pub(crate) fn new(b: [f64; 3], a: [f64; 2]) -> Self {
         Self {
             b,
             a,
@@ -165,7 +185,7 @@ impl Biquad {
         }
     }
     /// RBJ cookbook 2nd-order Butterworth high-pass.
-    fn high_pass(hz: f64, rate: f64) -> Self {
+    pub(crate) fn high_pass(hz: f64, rate: f64) -> Self {
         let w0 = 2.0 * std::f64::consts::PI * hz / rate;
         let alpha = w0.sin() / (2.0 * std::f64::consts::FRAC_1_SQRT_2);
         let cw = w0.cos();
@@ -179,7 +199,7 @@ impl Biquad {
             [-2.0 * cw / a0, (1.0 - alpha) / a0],
         )
     }
-    fn run(&mut self, x: f64) -> f64 {
+    pub(crate) fn run(&mut self, x: f64) -> f64 {
         let y = self.b[0] * x + self.b[1] * self.x[0] + self.b[2] * self.x[1]
             - self.a[0] * self.y[0]
             - self.a[1] * self.y[1];
@@ -323,12 +343,32 @@ pub fn limit(s: &mut Stereo, ceiling: f32) {
     }
 }
 
-fn load_track(t: &AudioRef) -> Result<Option<Stereo>> {
+/// Decode a track to 48 kHz stereo, streaming: memory is the decoded audio the
+/// project can use (its duration plus a margin), never the file's claimed size,
+/// and the header must match what the project declares.
+fn load_track(t: &AudioRef, duration_ms: f64) -> Result<Option<Stereo>> {
     if !t.path.is_file() {
         return Ok(None);
     }
-    let (rate, s) = read_wav(&t.path)?;
-    Ok(Some(resample(rate, s)))
+    let need_ms = (duration_ms - t.offset_ms.min(0.0)).max(0.0) + 1000.0;
+    let lim = crate::wavstream::Limits {
+        max_out_frames: (need_ms * RATE as f64 / 1000.0).ceil() as u64,
+        expect_rate: t.expect.map(|e| e.0),
+        expect_channels: t.expect.map(|e| e.1),
+    };
+    let mut data: Vec<f32> = Vec::new();
+    let mut oom = false;
+    crate::wavstream::stream_48k(&t.path, lim, &mut |c| {
+        if data.try_reserve(c.len()).is_err() {
+            oom = true;
+        } else {
+            data.extend_from_slice(c);
+        }
+    })?;
+    if oom {
+        return Err(RenderError::Audio("out of memory decoding audio".into()));
+    }
+    Ok(Some(Stereo { data }))
 }
 
 /// Add `s` (whose sample 0 sits at `offset_ms` on the video clock) into `dst`
@@ -375,10 +415,30 @@ pub fn remap(src: &Stereo, p: &RenderProject) -> Stereo {
         acc_ms += piece.out_len();
         let end = ((acc_ms * r).round() as usize).min(n_out);
         let first = done;
+        // Speeding up beyond 2x decimates hard: average over one output step's worth of source
+        // (a box low-pass whose first null is the new Nyquist) so tones above it
+        // are attenuated instead of folding down.
+        let taps = if piece.speed > 2.0 {
+            ((piece.speed * 2.0).ceil() as usize).clamp(2, 16)
+        } else {
+            1
+        };
         while done < end {
             let pos = piece.src_start * r + (done - first) as f64 * piece.speed;
-            out.push(at(pos, 0));
-            out.push(at(pos, 1));
+            if taps == 1 {
+                out.push(at(pos, 0));
+                out.push(at(pos, 1));
+            } else {
+                for c in 0..2 {
+                    let sum: f32 = (0..taps)
+                        .map(|t| {
+                            let off = ((t as f64 + 0.5) / taps as f64 - 0.5) * piece.speed;
+                            at(pos + off, c)
+                        })
+                        .sum();
+                    out.push(sum / taps as f32);
+                }
+            }
             done += 1;
         }
     }
@@ -386,24 +446,45 @@ pub fn remap(src: &Stereo, p: &RenderProject) -> Stereo {
     Stereo { data: out }
 }
 
+/// Full audio as one buffer, produced by the streaming mixer (see
+/// [`crate::mixer::MixPlan`]); the export itself never materialises it.
+pub fn render(p: &RenderProject) -> Result<Option<Vec<i16>>> {
+    let Some(plan) = crate::mixer::MixPlan::new(p)? else {
+        return Ok(None);
+    };
+    let mut s = plan.stream()?;
+    let mut out = Vec::new();
+    loop {
+        let c = s.take(1 << 16)?;
+        if c.is_empty() {
+            return Ok(Some(out));
+        }
+        out.extend(c);
+    }
+}
+
 /// Full audio for the export: `None` when the project has no readable audio.
 /// Returns interleaved stereo i16 at 48 kHz, exactly `output_ms` long.
-pub fn render(p: &RenderProject) -> Result<Option<Vec<i16>>> {
+/// Whole-buffer reference mix (memory grows with the duration). The export uses
+/// the streaming [`crate::mixer`]; this stays as the specification the chunked
+/// path is tested against.
+#[doc(hidden)]
+pub fn render_whole(p: &RenderProject) -> Result<Option<Vec<i16>>> {
     let style: AudioStyle = p.style.audio;
-    let mic = match &p.mic {
-        Some(t) => load_track(t)?,
-        None => None,
-    };
-    let sys = match &p.system {
-        Some(t) => load_track(t)?,
-        None => None,
-    };
-    if mic.is_none() && sys.is_none() {
+    let has = |t: &Option<AudioRef>| t.as_ref().is_some_and(|t| t.path.is_file());
+    if !has(&p.mic) && !has(&p.system) {
         return Ok(None);
     }
     let src_len = (p.duration_ms.max(0.0) * RATE as f64 / 1000.0).ceil() as usize + RATE as usize;
-    let mut mix = Stereo {
-        data: vec![0.0; src_len * 2],
+    let mut mix = Stereo::default();
+    mix.data
+        .try_reserve_exact(src_len * 2)
+        .map_err(|_| RenderError::Audio("out of memory mixing audio".into()))?;
+    mix.data.resize(src_len * 2, 0.0);
+    // One decoded track at a time keeps the peak at mix + one track.
+    let mic = match &p.mic {
+        Some(t) => load_track(t, p.duration_ms)?,
+        None => None,
     };
     if let (Some(mut m), Some(t)) = (mic, &p.mic)
         && style.mic_gain > 0.0
@@ -417,6 +498,10 @@ pub fn render(p: &RenderProject) -> Result<Option<Vec<i16>>> {
         m.data.iter_mut().for_each(|x| *x *= style.mic_gain as f32);
         place(&mut mix, &m, t.offset_ms);
     }
+    let sys = match &p.system {
+        Some(t) => load_track(t, p.duration_ms)?,
+        None => None,
+    };
     if let (Some(mut s), Some(t)) = (sys, &p.system)
         && style.system_gain > 0.0
     {
@@ -488,6 +573,110 @@ mod tests {
         let (_, s) = parse_wav(&wav_bytes(3, 32, 2, 48000, &fl)).unwrap();
         assert_eq!(s.data, vec![0.25, -0.5]);
         assert!(parse_wav(b"nope").is_err());
+    }
+
+    /// RF64: `RF64` magic, a `ds64` chunk with the 64-bit sizes first, and 0xFFFFFFFF
+    /// in the 32-bit size fields it replaces.
+    fn rf64_bytes(data_size_in_ds64: u64, samples: &[u8], ds64_len: usize) -> Vec<u8> {
+        let mut v = b"RF64\xff\xff\xff\xffWAVEds64".to_vec();
+        v.extend((ds64_len as u32).to_le_bytes());
+        let mut body = Vec::new();
+        body.extend((4096u64 + data_size_in_ds64).to_le_bytes()); // riff size
+        body.extend(data_size_in_ds64.to_le_bytes()); // data size
+        body.extend((data_size_in_ds64 / 4).to_le_bytes()); // sample count
+        body.extend(0u32.to_le_bytes()); // table length
+        body.resize(ds64_len, 0);
+        v.extend(body);
+        v.extend(b"fmt ");
+        v.extend(16u32.to_le_bytes());
+        v.extend(1u16.to_le_bytes());
+        v.extend(2u16.to_le_bytes());
+        v.extend(48_000u32.to_le_bytes());
+        v.extend(192_000u32.to_le_bytes());
+        v.extend(4u16.to_le_bytes());
+        v.extend(16u16.to_le_bytes());
+        v.extend(b"data");
+        v.extend(0xFFFF_FFFFu32.to_le_bytes());
+        v.extend(samples);
+        v
+    }
+
+    #[test]
+    fn rf64_files_take_the_data_size_from_ds64() {
+        let pcm: Vec<u8> = [1000i16, -1000, 2000, -2000, 3000, -3000]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
+        let (rate, s) = parse_wav(&rf64_bytes(pcm.len() as u64, &pcm, 28)).unwrap();
+        assert_eq!(rate, 48_000);
+        assert_eq!(s.frames(), 3);
+        assert!((s.data[0] - 1000.0 / 32768.0).abs() < 1e-6);
+        assert!((s.data[5] + 3000.0 / 32768.0).abs() < 1e-6);
+        // ds64 may be longer than the 28 bytes it needs (table entries follow).
+        assert_eq!(
+            parse_wav(&rf64_bytes(pcm.len() as u64, &pcm, 40))
+                .unwrap()
+                .1
+                .frames(),
+            3
+        );
+        // ds64 says only 2 frames are data (trailing chunk bytes are not audio).
+        assert_eq!(parse_wav(&rf64_bytes(8, &pcm, 28)).unwrap().1.frames(), 2);
+        // A claimed size beyond the file (> 4 GiB header, truncated copy) uses what exists.
+        let (_, big) = parse_wav(&rf64_bytes(6 << 30, &pcm, 28)).unwrap();
+        assert_eq!(big.frames(), 3);
+        // BW64 is the same container.
+        let mut bw = rf64_bytes(pcm.len() as u64, &pcm, 28);
+        bw[0..4].copy_from_slice(b"BW64");
+        assert_eq!(parse_wav(&bw).unwrap().1.frames(), 3);
+    }
+
+    #[test]
+    fn core_style_wavs_with_a_junk_chunk_parse_as_riff_and_rf64() {
+        let pcm: Vec<u8> = [100i16, -100, 200, -200]
+            .iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
+        // RIFF + 28-byte JUNK placeholder + fmt + data (what the recorder writes).
+        let plain = wav_bytes(1, 16, 2, 48_000, &pcm);
+        let mut junk = plain[..12].to_vec();
+        junk.extend(b"JUNK");
+        junk.extend(28u32.to_le_bytes());
+        junk.extend([0u8; 28]);
+        junk.extend(&plain[12..]);
+        let (rate, s) = parse_wav(&junk).unwrap();
+        assert_eq!((rate, s.frames()), (48_000, 2));
+        // Promoted to RF64: header patched, the JUNK chunk becomes ds64.
+        let mut rf = junk.clone();
+        rf[0..4].copy_from_slice(b"RF64");
+        rf[4..8].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        rf[12..16].copy_from_slice(b"ds64");
+        rf[28..36].copy_from_slice(&(pcm.len() as u64).to_le_bytes()); // payload bytes 8..16
+        let n = rf.len();
+        rf[n - pcm.len() - 4..n - pcm.len()].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        assert_eq!(parse_wav(&rf).unwrap().1.frames(), 2);
+        // Truncated headers are errors, never panics.
+        for cut in [0, 4, 11, 12, 20, 40, 50] {
+            let _ = parse_wav(&rf[..cut.min(rf.len())]);
+            let _ = parse_wav(&junk[..cut.min(junk.len())]);
+        }
+        assert!(parse_wav(&rf[..30]).is_err());
+    }
+
+    #[test]
+    fn rf64_without_a_usable_ds64_is_rejected() {
+        let pcm = [0u8; 16];
+        // ds64 too short to hold the sizes.
+        assert!(parse_wav(&rf64_bytes(16, &pcm, 12)).is_err());
+        // RF64 file whose first chunk is not ds64.
+        let mut v = b"RF64\xff\xff\xff\xffWAVE".to_vec();
+        v.extend(&wav_bytes(1, 16, 2, 48_000, &pcm)[12..]);
+        assert!(parse_wav(&v).is_err());
+        // Plain RIFF with a 0xFFFFFFFF data size (streamed WAV) still reads to the end of file.
+        let mut streamed = wav_bytes(1, 16, 2, 48_000, &pcm);
+        let n = streamed.len();
+        streamed[n - 16 - 4..n - 16].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        assert_eq!(parse_wav(&streamed).unwrap().1.frames(), 4);
     }
 
     #[test]
@@ -644,10 +833,12 @@ mod tests {
         p.mic = Some(AudioRef {
             path: tone_wav(&dir, "mic.wav", 440.0, 0.3),
             offset_ms: 0.0,
+            expect: None,
         });
         p.system = Some(AudioRef {
             path: tone_wav(&dir, "sys.wav", 880.0, 0.3),
             offset_ms: 0.0,
+            expect: None,
         });
         p.style.audio = AudioStyle::OFF;
         p
@@ -690,6 +881,50 @@ mod tests {
             im += f[0] as f64 * (w * i as f64).sin();
         }
         (re * re + im * im).sqrt() / (v.len() / 2) as f64
+    }
+
+    #[test]
+    fn declared_format_must_match_the_files_header() {
+        let mut p = tone_project("expect");
+        p.mic.as_mut().unwrap().expect = Some((44_100, 2)); // the file is 48 kHz
+        assert!(matches!(render(&p), Err(RenderError::Audio(_))));
+        p.mic.as_mut().unwrap().expect = Some((48_000, 2));
+        assert!(render(&p).unwrap().is_some());
+    }
+
+    #[test]
+    fn speeding_up_low_passes_so_high_tones_do_not_alias() {
+        let mut p = RenderProject::empty_for_tests();
+        p.pieces = vec![Piece {
+            src_start: 0.0,
+            src_end: 2000.0,
+            speed: 4.0,
+        }];
+        let mag = |s: &Stereo, hz: f64| {
+            let w = 2.0 * std::f64::consts::PI * hz / RATE as f64;
+            let (mut re, mut im) = (0.0, 0.0);
+            for (i, f) in s.data.chunks(2).enumerate() {
+                re += f64::from(f[0]) * (w * i as f64).cos();
+                im += f64::from(f[0]) * (w * i as f64).sin();
+            }
+            (re * re + im * im).sqrt() / (s.data.len() / 2) as f64
+        };
+        // 10 kHz at 4x would land at 40 kHz and fold down to 8 kHz.
+        let high = remap(&sine(10_000.0, 1.0, 2.0), &p);
+        // 1 kHz at 4x is a clean 4 kHz and must survive.
+        let low = remap(&sine(1_000.0, 1.0, 2.0), &p);
+        let alias = mag(&high, 8_000.0);
+        let kept = mag(&low, 4_000.0);
+        assert!(kept > 0.4, "wanted tone kept: {kept}");
+        assert!(
+            alias < kept * 0.5,
+            "alias {alias} must be well below the kept tone {kept}"
+        );
+        // Normal speed is untouched (bit-exact copy path).
+        p.pieces[0].speed = 1.0;
+        let a = sine(440.0, 0.5, 1.0);
+        let out = remap(&a, &p);
+        assert_eq!(&out.data[..2000], &a.data[..2000]);
     }
 
     #[test]

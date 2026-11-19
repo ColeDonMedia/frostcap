@@ -116,6 +116,8 @@ fn main() {
             hwnd: w.hwnd,
             pid: Some(w.pid),
         }
+    } else if flag("--all") {
+        CaptureSource::AllDisplays
     } else if flag("--region") {
         let m = &list.monitors[0];
         CaptureSource::Region {
@@ -144,8 +146,11 @@ fn main() {
     let mut session = RecordingSession::start(opts, &dir).expect("start recording");
     let timings = session.timings();
     println!(
-        "start: {} ms total (capture setup {} ms, encoder setup {} ms), canvas {}x{}",
+        "start: {} ms total (prep {} ms, side tracks {} ms, waited for screen {} ms; screen: capture setup {} ms, encoder setup {} ms), canvas {}x{}",
         t.elapsed().as_millis(),
+        timings.prep_ms,
+        timings.side_tracks_ms,
+        timings.screen_wait_ms,
         timings.capture_setup_ms,
         timings.encoder_setup_ms,
         timings.width,

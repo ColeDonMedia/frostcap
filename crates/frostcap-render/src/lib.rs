@@ -30,19 +30,25 @@
 #![warn(missing_docs)]
 
 pub mod audio;
+pub mod background;
 pub mod error;
 pub mod font;
 pub mod gifenc;
 pub mod math;
+pub mod mixer;
 pub mod model;
 pub mod mp4info;
 pub mod scene;
+pub mod suggest;
 pub mod text;
+pub mod wavstream;
 
 #[cfg(windows)]
 mod export;
 #[cfg(windows)]
 pub mod gpu;
+#[cfg(windows)]
+pub mod image;
 #[cfg(windows)]
 pub mod mf;
 
@@ -50,7 +56,7 @@ use serde::{Deserialize, Serialize};
 
 pub use error::{RenderError, Result};
 #[cfg(windows)]
-pub use export::{export, export_project};
+pub use export::{BatchJob, BatchProgress, export, export_batch, export_project};
 pub use model::RenderProject;
 
 /// Output aspect ratio.
@@ -80,6 +86,16 @@ pub enum OutputFormat {
     Mp4,
     /// Animated GIF (fps and size capped).
     Gif,
+    /// AV1 + AAC in MP4. Needs an AV1 encoder MFT (`mf::encoder_caps().av1`);
+    /// Media Foundation has no WebM muxer, so this is the container Windows offers.
+    Av1,
+}
+
+impl OutputFormat {
+    /// Written through the Media Foundation MP4 sink (with AAC audio).
+    pub fn is_mp4_container(self) -> bool {
+        matches!(self, Self::Mp4 | Self::Av1)
+    }
 }
 
 /// Export request preset, the editor's `{ aspect, width, height, fps, format }`.
@@ -159,8 +175,11 @@ impl ExportPreset {
         }
         let (width, height) = (even(w), even(h));
         let px = (width as f64 * height as f64) / (1920.0 * 1080.0);
-        let bitrate = (16_000_000.0 * px * (fps as f64 / 60.0).max(0.5))
+        let mut bitrate = (16_000_000.0 * px * (fps as f64 / 60.0).max(0.5))
             .clamp(2_000_000.0, 80_000_000.0) as u32;
+        if self.format == OutputFormat::Av1 {
+            bitrate = (bitrate as f64 * 0.65) as u32; // AV1 needs fewer bits for the same quality
+        }
         Resolved {
             width,
             height,
@@ -231,6 +250,11 @@ pub struct ExportStats {
     pub duration_ms: f64,
     /// Wall time (s).
     pub elapsed_s: f64,
+    /// Time from the start of the export to the first rendered frame (s):
+    /// decoder/encoder/GPU setup.
+    pub setup_s: f64,
+    /// Non-fatal problems (for example audio skipped on a very long recording).
+    pub warnings: Vec<String>,
     /// Output seconds per wall second.
     pub realtime_factor: f64,
     /// GPU adapter used.
@@ -267,6 +291,29 @@ mod tests {
         assert_eq!((p.width, p.height, p.fps), (1080, 1920, 30));
         let s = serde_json::to_string(&ExportPreset::default()).unwrap();
         assert!(s.contains(r#""aspect":"16:9""#) && s.contains(r#""format":"mp4""#));
+    }
+
+    #[test]
+    fn av1_format_is_an_mp4_container_with_a_lower_bitrate() {
+        let p: ExportPreset = serde_json::from_str(r#"{"format":"av1"}"#).unwrap();
+        assert_eq!(p.format, OutputFormat::Av1);
+        assert_eq!(
+            serde_json::to_string(&OutputFormat::Av1).unwrap(),
+            r#""av1""#
+        );
+        assert!(OutputFormat::Av1.is_mp4_container() && OutputFormat::Mp4.is_mp4_container());
+        assert!(!OutputFormat::Gif.is_mp4_container());
+        let h264 = ExportPreset::default().resolve((1920, 1080));
+        let av1 = ExportPreset {
+            format: OutputFormat::Av1,
+            ..ExportPreset::default()
+        }
+        .resolve((1920, 1080));
+        assert_eq!(
+            (av1.width, av1.height, av1.fps),
+            (h264.width, h264.height, h264.fps)
+        );
+        assert!(av1.bitrate < h264.bitrate && av1.bitrate >= 1_000_000);
     }
 
     #[test]

@@ -49,12 +49,13 @@ export type WireCaptureSource =
   | { kind: "primaryMonitor" }
   | { kind: "monitor"; id: string }
   | { kind: "window"; hwnd: number; pid?: number }
-  | { kind: "region"; monitorId: string; rect: WireNormRect };
+  | { kind: "region"; monitorId: string; rect: WireNormRect }
+  | { kind: "allDisplays" };
 
 export interface WireSourceItem {
   /** Flat id: `display:\\.\DISPLAY1`, `window:65812`. */
   id: string;
-  kind: "display" | "window" | "region";
+  kind: "display" | "window" | "region" | "allDisplays";
   name: string;
   width: number;
   height: number;
@@ -129,6 +130,7 @@ export interface WireExportProgress {
   outPath: string;
   progress: number;
   stage: string;
+  jobIndex?: number;
 }
 
 export type WireHotkeyAction = "startStop" | "pauseResume";
@@ -237,6 +239,52 @@ export interface WireTrimRange {
   endMs: number;
 }
 
+export interface WireWebcam {
+  enabled: boolean;
+  shape: "circle" | "rounded" | "square";
+  size: number;
+  position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  margin?: number;
+  borderWidth?: number;
+  borderColor?: string;
+  mirror?: boolean;
+  brightness?: number;
+  contrast?: number;
+  saturation?: number;
+  shadow?: number;
+  chromaKey?: { enabled: boolean; color: string; similarity: number; smoothness: number; spill: number };
+  background?: { kind: "none" | "color" | "gradient" | "image" | "blur"; color: string; gradient: string; image?: string; blur: number };
+}
+
+export interface WireSpeedSegment {
+  startMs: number;
+  endMs: number;
+  speed: number;
+}
+
+export interface WireAnnotation {
+  id: string;
+  kind: "arrow" | "text" | "rect" | "ellipse" | "highlight" | "spotlight" | "blur" | "pixelate";
+  startMs: number;
+  endMs: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  x2: number;
+  y2: number;
+  color: string;
+  strokeWidth: number;
+  fill: boolean;
+  text: string;
+  fontSize: number;
+  opacity: number;
+  strength: number;
+  dim: number;
+  cornerRadius: number;
+  fadeMs: number;
+}
+
 export interface WireStyle {
   background: string;
   padding: number;
@@ -247,9 +295,10 @@ export interface WireStyle {
   showClicks: boolean;
   showKeys: boolean;
   /** Typed editor settings (optional on read, always written). */
-  frame?: "none" | "minimal" | "windows" | "macos";
+  frame?: "none" | "minimal" | "windows" | "macos" | "laptop" | "phone";
+  backgroundImage?: { file: string; fit: "cover" | "contain"; blur: number };
   cursor?: { visible: boolean; smoothing: number; motionBlur: number };
-  webcam?: { enabled: boolean; shape: "circle" | "rounded" | "square"; size: number; position: "top-left" | "top-right" | "bottom-left" | "bottom-right" };
+  webcam?: WireWebcam;
   audio?: {
     noiseGate: boolean;
     noiseGateThreshold: number;
@@ -274,6 +323,9 @@ export interface WireEditList {
   trims: WireTrimRange[];
   style: WireStyle;
   captions?: WireCaptionCue[];
+  /** Optional on read (missing = none), always written. */
+  speed?: WireSpeedSegment[];
+  annotations?: WireAnnotation[];
   /** Clip boundaries inside kept ranges (timeline round-trip only). */
   splits?: number[];
   /** Opaque cosmetic editor state (zoom defaults), round-tripped verbatim by Rust (size-capped). */
@@ -324,7 +376,7 @@ export interface WireOutputPreset {
   width: number;
   height: number;
   fps: number;
-  format: "mp4" | "gif";
+  format: "mp4" | "gif" | "av1";
 }
 
 /** `export_project` `preset` argument (untagged). */

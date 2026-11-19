@@ -1,0 +1,12 @@
+{
+  "args": {},
+  "response": {
+    "av1": false,
+    "formats": [
+      "mp4",
+      "gif"
+    ],
+    "h264": true,
+    "vp9": false
+  }
+}

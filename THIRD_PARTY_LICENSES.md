@@ -36,7 +36,7 @@ texts are printed once with the list of packages that ship them.
 - Rust crates used only by other workspace members (not yet in frostcap.exe): **0**
 - Rust build-time-only crates (proc-macros, build scripts, codegen, dev): **97**
 - npm production packages (bundled into the UI): **13**
-- npm development packages (build tools, not distributed): **151**
+- npm development packages (build tools, not distributed): **110**
 
 ## First-party workspace crates (MIT)
 
@@ -349,11 +349,11 @@ MIT: 10 · 0BSD: 1 · Apache-2.0 OR MIT: 1 · ISC: 1
 | @tauri-apps/api | 2.12.5 | Apache-2.0 OR MIT | <https://github.com/tauri-apps/tauri> |
 | @types/react | 19.3.0 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
 | csstype | 3.2.4 | MIT | <https://github.com/frenic/csstype> |
-| framer-motion | 12.43.0 | MIT | <https://github.com/motiondivision/motion/> |
-| lucide-react | 0.511.0 | ISC | <https://github.com/lucide-icons/lucide> |
-| motion-dom | 12.43.0 | MIT | <https://github.com/motiondivision/motion> |
-| motion-utils | 12.39.0 | MIT | <https://github.com/motiondivision/motion> |
-| motion | 12.43.0 | MIT | <https://github.com/motiondivision/motion> |
+| framer-motion | 14.14.0 | MIT | <https://github.com/motiondivision/motion/> |
+| lucide-react | 1.75.0 | ISC | <https://github.com/lucide-icons/lucide> |
+| motion-dom | 14.14.0 | MIT | <https://github.com/motiondivision/motion> |
+| motion-utils | 14.7.0 | MIT | <https://github.com/motiondivision/motion> |
+| motion | 14.14.0 | MIT | <https://github.com/motiondivision/motion> |
 | react-dom | 19.3.1 | MIT | <https://github.com/react/react> |
 | react | 19.3.1 | MIT | <https://github.com/react/react> |
 | scheduler | 0.28.0 | MIT | <https://github.com/react/react> |
@@ -365,87 +365,35 @@ MIT: 10 · 0BSD: 1 · Apache-2.0 OR MIT: 1 · ISC: 1
 Type checker, bundler, test runner, Tauri CLI and their dependencies. Used only to build and
 test the UI; their license texts are not reproduced here because they are not distributed.
 
-MIT: 128 · Apache-2.0 OR MIT: 12 · ISC: 5 · Apache-2.0: 3 · BSD-2-Clause: 1 · BSD-3-Clause: 1 · CC-BY-4.0: 1
+MIT: 60 · Apache-2.0: 23 · Apache-2.0 OR MIT: 12 · MPL-2.0: 12 · BSD-2-Clause: 1 · BSD-3-Clause: 1 · ISC: 1
 
 | Crate / package | Version | License (SPDX) | Source |
 |---|---|---|---|
-| @babel/code-frame | 7.29.7 | MIT | <https://github.com/babel/babel> |
-| @babel/compat-data | 7.29.7 | MIT | <https://github.com/babel/babel> |
-| @babel/core | 7.29.13 | MIT | <https://github.com/babel/babel> |
-| @babel/generator | 7.29.14 | MIT | <https://github.com/babel/babel> |
-| @babel/helper-compilation-targets | 7.29.13 | MIT | <https://github.com/babel/babel> |
-| @babel/helper-globals | 7.29.7 | MIT | <https://github.com/babel/babel> |
-| @babel/helper-module-imports | 7.29.7 | MIT | <https://github.com/babel/babel> |
-| @babel/helper-module-transforms | 7.29.14 | MIT | <https://github.com/babel/babel> |
-| @babel/helper-plugin-utils | 7.29.7 | MIT | <https://github.com/babel/babel> |
-| @babel/helper-string-parser | 7.29.14 | MIT | <https://github.com/babel/babel> |
-| @babel/helper-validator-identifier | 7.29.7 | MIT | <https://github.com/babel/babel> |
-| @babel/helper-validator-option | 7.29.7 | MIT | <https://github.com/babel/babel> |
-| @babel/helpers | 7.29.14 | MIT | <https://github.com/babel/babel> |
-| @babel/parser | 7.29.14 | MIT | <https://github.com/babel/babel> |
-| @babel/plugin-transform-react-jsx-self | 7.29.7 | MIT | <https://github.com/babel/babel> |
-| @babel/plugin-transform-react-jsx-source | 7.29.7 | MIT | <https://github.com/babel/babel> |
-| @babel/template | 7.29.7 | MIT | <https://github.com/babel/babel> |
-| @babel/traverse | 7.29.14 | MIT | <https://github.com/babel/babel> |
-| @babel/types | 7.29.14 | MIT | <https://github.com/babel/babel> |
-| @esbuild/aix-ppc64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/android-arm _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/android-arm64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/android-x64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/darwin-arm64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/darwin-x64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/freebsd-arm64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/freebsd-x64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/linux-arm _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/linux-arm64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/linux-ia32 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/linux-loong64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/linux-mips64el _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/linux-ppc64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/linux-riscv64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/linux-s390x _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/linux-x64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/netbsd-arm64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/netbsd-x64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/openbsd-arm64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/openbsd-x64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/openharmony-arm64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/sunos-x64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/win32-arm64 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/win32-ia32 _(optional, not installed on this platform)_ | 0.25.12 | MIT |  |
-| @esbuild/win32-x64 | 0.25.12 | MIT | <https://github.com/evanw/esbuild> |
-| @jridgewell/gen-mapping | 0.3.13 | MIT | <https://github.com/jridgewell/sourcemaps> |
-| @jridgewell/remapping | 2.3.5 | MIT | <https://github.com/jridgewell/sourcemaps> |
+| @emnapi/core _(optional, not installed on this platform)_ | 2.0.0-beta.2 | MIT |  |
+| @emnapi/runtime _(optional, not installed on this platform)_ | 2.0.0-beta.2 | MIT |  |
+| @emnapi/wasi-threads _(optional, not installed on this platform)_ | 2.2.0 | MIT |  |
 | @jridgewell/resolve-uri | 3.1.3 | MIT | <https://github.com/jridgewell/resolve-uri> |
 | @jridgewell/sourcemap-codec | 1.6.0 | MIT | <https://github.com/jridgewell/sourcemaps> |
 | @jridgewell/trace-mapping | 0.3.31 | MIT | <https://github.com/jridgewell/sourcemaps> |
-| @rolldown/pluginutils | 1.0.0-beta.27 | MIT | <https://github.com/rolldown/rolldown> |
-| @rollup/rollup-android-arm-eabi _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-android-arm64 _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-android-x64 _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-darwin-arm64 _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-darwin-x64 _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-freebsd-arm64 _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-freebsd-x64 _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-arm-gnueabihf _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-arm-musleabihf _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-arm64-gnu _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-arm64-musl _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-loong64-gnu _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-loong64-musl _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-ppc64-gnu _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-ppc64-musl _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-riscv64-gnu _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-riscv64-musl _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-s390x-gnu _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-x64-gnu _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-linux-x64-musl _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-openbsd-x64 _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-openharmony-arm64 _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-win32-arm64-msvc _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-win32-ia32-msvc _(optional, not installed on this platform)_ | 4.68.5 | MIT |  |
-| @rollup/rollup-win32-x64-gnu | 4.68.5 | MIT | <https://github.com/rollup/rollup> |
-| @rollup/rollup-win32-x64-msvc | 4.68.5 | MIT | <https://github.com/rollup/rollup> |
+| @napi-rs/wasm-runtime _(optional, not installed on this platform)_ | 1.2.6 | MIT |  |
+| @oxc-project/types | 0.156.0 | MIT | <https://github.com/oxc-project/oxc> |
+| @rolldown/binding-android-arm-eabi _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-android-arm64 _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-darwin-arm64 _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-darwin-x64 _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-freebsd-x64 _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-linux-arm-gnueabihf _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-linux-arm64-gnu _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-linux-arm64-musl _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-linux-ppc64-gnu _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-linux-s390x-gnu _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-linux-x64-gnu _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-linux-x64-musl _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-openharmony-arm64 _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-wasm32-wasi _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-win32-arm64-msvc _(optional, not installed on this platform)_ | 1.2.19 | MIT |  |
+| @rolldown/binding-win32-x64-msvc | 1.2.19 | MIT | <https://github.com/rolldown/rolldown> |
+| @rolldown/pluginutils | 1.1.1 | MIT | <https://github.com/rolldown/plugins> |
 | @tauri-apps/cli-darwin-arm64 _(optional, not installed on this platform)_ | 2.12.5 | Apache-2.0 OR MIT |  |
 | @tauri-apps/cli-darwin-x64 _(optional, not installed on this platform)_ | 2.12.5 | Apache-2.0 OR MIT |  |
 | @tauri-apps/cli-linux-arm-gnueabihf _(optional, not installed on this platform)_ | 2.12.5 | Apache-2.0 OR MIT |  |
@@ -458,68 +406,79 @@ MIT: 128 · Apache-2.0 OR MIT: 12 · ISC: 5 · Apache-2.0: 3 · BSD-2-Clause: 1 
 | @tauri-apps/cli-win32-ia32-msvc _(optional, not installed on this platform)_ | 2.12.5 | Apache-2.0 OR MIT |  |
 | @tauri-apps/cli-win32-x64-msvc | 2.12.5 | Apache-2.0 OR MIT | <https://github.com/tauri-apps/tauri> |
 | @tauri-apps/cli | 2.12.5 | Apache-2.0 OR MIT | <https://github.com/tauri-apps/tauri> |
-| @types/babel__core | 7.20.5 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
-| @types/babel__generator | 7.27.0 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
-| @types/babel__template | 7.4.4 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
-| @types/babel__traverse | 7.28.0 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
+| @tybys/wasm-util _(optional, not installed on this platform)_ | 0.10.5 | MIT |  |
 | @types/chai | 5.2.3 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
 | @types/deep-eql | 4.0.2 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
 | @types/estree | 1.0.10 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
-| @types/node | 22.20.5 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
+| @types/node | 26.6.6 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
 | @types/react-dom | 19.3.0 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
 | @types/whatwg-mimetype | 3.0.2 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
 | @types/ws | 8.18.2 | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
-| @vitejs/plugin-react | 4.7.0 | MIT | <https://github.com/vitejs/vite-plugin-react> |
+| @typescript/typescript-aix-ppc64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-darwin-arm64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-darwin-x64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-freebsd-arm64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-freebsd-x64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-linux-arm _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-linux-arm64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-linux-loong64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-linux-mips64el _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-linux-ppc64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-linux-riscv64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-linux-s390x _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-linux-x64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-netbsd-arm64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-netbsd-x64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-openbsd-arm64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-openbsd-x64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-sunos-x64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-win32-arm64 _(optional, not installed on this platform)_ | 7.0.2 | Apache-2.0 |  |
+| @typescript/typescript-win32-x64 | 7.0.2 | Apache-2.0 | <https://github.com/microsoft/TypeScript> |
+| @vitejs/plugin-react | 6.3.0 | MIT | <https://github.com/vitejs/vite-plugin-react> |
 | @vitest/mocker | 5.1.1 | MIT | <https://github.com/vitest-dev/vitest> |
 | @vitest/spy | 5.1.1 | MIT | <https://github.com/vitest-dev/vitest> |
 | assertion-error | 2.0.1 | MIT | <https://github.com/chaijs/assertion-error> |
-| baseline-browser-mapping | 2.11.38 | Apache-2.0 | <https://github.com/web-platform-dx/baseline-browser-mapping> |
-| browserslist | 4.29.6 | MIT | <https://github.com/browserslist/browserslist> |
 | buffer-image-size | 0.6.4 | MIT | <https://github.com/evidentpoint/buffer-image-size> |
-| caniuse-lite **(CC-BY-4.0 data, dev only)** | 1.0.30001826 | CC-BY-4.0 | <https://github.com/browserslist/caniuse-lite> |
 | chai | 6.3.0 | MIT | <https://github.com/chaijs/chai> |
-| convert-source-map | 2.0.0 | MIT | <https://github.com/thlorenz/convert-source-map> |
-| debug | 4.4.3 | MIT | <https://github.com/debug-js/debug> |
-| electron-to-chromium | 1.5.487 | ISC | <https://github.com/Kilian/electron-to-chromium> |
+| detect-libc | 2.1.2 | Apache-2.0 | <https://github.com/lovell/detect-libc> |
 | entities | 7.0.1 | BSD-2-Clause | <https://github.com/fb55/entities> |
 | es-module-lexer | 2.3.2 | MIT | <https://github.com/guybedford/es-module-lexer> |
-| esbuild | 0.25.12 | MIT | <https://github.com/evanw/esbuild> |
-| escalade | 3.2.0 | MIT | <https://github.com/lukeed/escalade> |
 | estree-walker | 3.0.3 | MIT | <https://github.com/Rich-Harris/estree-walker> |
 | expect-type | 1.4.0 | Apache-2.0 | <https://github.com/mmkal/expect-type> |
 | fdir | 6.5.0 | MIT | <https://github.com/thecodrr/fdir> |
 | fsevents _(optional, not installed on this platform)_ | 2.3.3 | MIT |  |
-| gensync | 1.0.0-beta.2 | MIT | <https://github.com/loganfsmyth/gensync> |
 | happy-dom | 21.0.4 | MIT | <https://github.com/capricorn86/happy-dom> |
-| js-tokens | 4.0.0 | MIT | <https://github.com/lydell/js-tokens> |
-| jsesc | 3.1.0 | MIT | <https://github.com/mathiasbynens/jsesc> |
-| json5 | 2.2.3 | MIT | <https://github.com/json5/json5> |
-| lru-cache | 5.1.1 | ISC | <https://github.com/isaacs/node-lru-cache> |
+| lightningcss-android-arm64 _(optional, not installed on this platform)_ | 1.33.0 | MPL-2.0 |  |
+| lightningcss-darwin-arm64 _(optional, not installed on this platform)_ | 1.33.0 | MPL-2.0 |  |
+| lightningcss-darwin-x64 _(optional, not installed on this platform)_ | 1.33.0 | MPL-2.0 |  |
+| lightningcss-freebsd-x64 _(optional, not installed on this platform)_ | 1.33.0 | MPL-2.0 |  |
+| lightningcss-linux-arm-gnueabihf _(optional, not installed on this platform)_ | 1.33.0 | MPL-2.0 |  |
+| lightningcss-linux-arm64-gnu _(optional, not installed on this platform)_ | 1.33.0 | MPL-2.0 |  |
+| lightningcss-linux-arm64-musl _(optional, not installed on this platform)_ | 1.33.0 | MPL-2.0 |  |
+| lightningcss-linux-x64-gnu _(optional, not installed on this platform)_ | 1.33.0 | MPL-2.0 |  |
+| lightningcss-linux-x64-musl _(optional, not installed on this platform)_ | 1.33.0 | MPL-2.0 |  |
+| lightningcss-win32-arm64-msvc _(optional, not installed on this platform)_ | 1.33.0 | MPL-2.0 |  |
+| lightningcss-win32-x64-msvc | 1.33.0 | MPL-2.0 | <https://github.com/parcel-bundler/lightningcss> |
+| lightningcss | 1.33.0 | MPL-2.0 | <https://github.com/parcel-bundler/lightningcss> |
 | magic-string | 1.4.5 | MIT | <https://github.com/Rich-Harris/magic-string> |
-| ms | 2.1.3 | MIT | <https://github.com/vercel/ms> |
 | nanoid | 3.3.20 | MIT | <https://github.com/ai/nanoid> |
-| node-releases | 2.0.65 | MIT | <https://github.com/chicoxyzzy/node-releases> |
 | obug | 3.0.0 | MIT | <https://github.com/sxzz/obug> |
 | picocolors | 1.1.1 | ISC | <https://github.com/alexeyraspopov/picocolors> |
 | picomatch | 4.0.7 | MIT | <https://github.com/micromatch/picomatch> |
 | postcss | 8.5.33 | MIT | <https://github.com/postcss/postcss> |
-| react-refresh | 0.17.0 | MIT | <https://github.com/facebook/react> |
-| rollup | 4.68.5 | MIT | <https://github.com/rollup/rollup> |
-| semver | 6.3.2 | ISC | <https://github.com/npm/node-semver> |
+| rolldown | 1.2.19 | MIT | <https://github.com/rolldown/rolldown> |
 | source-map-js | 1.2.2 | BSD-3-Clause | <https://github.com/7rulnik/source-map-js> |
 | std-env | 4.3.0 | MIT | <https://github.com/unjs/std-env> |
 | tinybench | 6.2.4 | MIT | <https://github.com/tinylibs/tinybench> |
 | tinyexec | 1.3.1 | MIT | <https://github.com/tinylibs/tinyexec> |
 | tinyglobby | 0.2.17 | MIT | <https://github.com/SuperchupuDev/tinyglobby> |
-| typescript | 5.8.3 | Apache-2.0 | <https://github.com/microsoft/TypeScript> |
-| undici-types | 6.21.0 | MIT | <https://github.com/nodejs/undici> |
-| update-browserslist-db | 1.4.0 | MIT | <https://github.com/browserslist/update-db> |
-| vite | 6.4.6 | MIT | <https://github.com/vitejs/vite> |
+| typescript | 7.0.2 | Apache-2.0 | <https://github.com/microsoft/TypeScript> |
+| undici-types | 8.9.0 | MIT | <https://github.com/nodejs/undici> |
+| vite | 8.3.8 | MIT | <https://github.com/vitejs/vite> |
 | vitest | 5.1.1 | MIT | <https://github.com/vitest-dev/vitest> |
 | whatwg-mimetype | 3.0.0 | MIT | <https://github.com/jsdom/whatwg-mimetype> |
 | why-is-node-running | 3.2.1 | MIT | <https://github.com/mafintosh/why-is-node-running> |
 | ws | 8.23.0 | MIT | <https://github.com/websockets/ws> |
-| yallist | 3.1.1 | ISC | <https://github.com/isaacs/yallist> |
 
 ## 6. License texts and notices
 
@@ -7543,7 +7502,7 @@ SOFTWARE.
 
 ### Text 100
 
-Used by: npm: framer-motion 12.43.0
+Used by: npm: framer-motion 14.14.0
 
 ~~~~text
 The MIT License (MIT)
@@ -7571,12 +7530,12 @@ SOFTWARE.
 
 ### Text 101
 
-Used by: npm: lucide-react 0.511.0
+Used by: npm: lucide-react 1.75.0
 
 ~~~~text
 ISC License
 
-Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2022.
+Copyright (c) 2026 Lucide Icons and Contributors
 
 Permission to use, copy, modify, and/or distribute this software for any
 purpose with or without fee is hereby granted, provided that the above
@@ -7589,11 +7548,39 @@ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+---
+
+The following Lucide icons are derived from the Feather project:
+
+airplay, alert-circle, alert-octagon, alert-triangle, aperture, arrow-down-circle, arrow-down-left, arrow-down-right, arrow-down, arrow-left-circle, arrow-left, arrow-right-circle, arrow-right, arrow-up-circle, arrow-up-left, arrow-up-right, arrow-up, at-sign, calendar, cast, check, chevron-down, chevron-left, chevron-right, chevron-up, chevrons-down, chevrons-left, chevrons-right, chevrons-up, circle, clipboard, clock, code, columns, command, compass, corner-down-left, corner-down-right, corner-left-down, corner-left-up, corner-right-down, corner-right-up, corner-up-left, corner-up-right, crosshair, database, divide-circle, divide-square, dollar-sign, download, external-link, feather, frown, hash, headphones, help-circle, info, italic, key, layout, life-buoy, link-2, link, loader, lock, log-in, log-out, maximize, meh, minimize, minimize-2, minus-circle, minus-square, minus, monitor, moon, more-horizontal, more-vertical, move, music, navigation-2, navigation, octagon, pause-circle, percent, plus-circle, plus-square, plus, power, radio, rss, search, server, share, shopping-bag, sidebar, smartphone, smile, square, table-2, tablet, target, terminal, trash-2, trash, triangle, tv, type, upload, x-circle, x-octagon, x-square, x, zoom-in, zoom-out
+
+The MIT License (MIT) (for the icons listed above)
+
+Copyright (c) 2013-present Cole Bemis
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ~~~~
 
 ### Text 102
 
-Used by: npm: motion 12.43.0, npm: motion-dom 12.43.0, npm: motion-utils 12.39.0
+Used by: npm: motion 14.14.0, npm: motion-dom 14.14.0, npm: motion-utils 14.7.0
 
 ~~~~text
 The MIT License (MIT)

@@ -13,6 +13,7 @@
     "cursorBaked": false,
     "durationMs": 3000,
     "edits": {
+      "annotations": [],
       "captions": [
         {
           "endMs": 1400,
@@ -25,6 +26,7 @@
           "text": "Save with Ctrl + S"
         }
       ],
+      "speed": [],
       "splits": [
         1500
       ],
@@ -60,8 +62,29 @@
         "showClicks": true,
         "showKeys": true,
         "webcam": {
+          "background": {
+            "blur": 0.5,
+            "color": "#11141c",
+            "gradient": "linear-gradient(135deg,#a1c4fd,#c2e9fb)",
+            "kind": "none"
+          },
+          "borderColor": "#ffffff",
+          "borderWidth": 0.0,
+          "brightness": 0.0,
+          "chromaKey": {
+            "color": "#00ff00",
+            "enabled": false,
+            "similarity": 0.4,
+            "smoothness": 0.1,
+            "spill": 0.5
+          },
+          "contrast": 1.0,
           "enabled": true,
+          "margin": 0.025925925925925925,
+          "mirror": false,
           "position": "top-right",
+          "saturation": 1.0,
+          "shadow": 0.4,
           "shape": "rounded",
           "size": 0.25
         }

@@ -12,10 +12,10 @@ export const GRADIENTS: GradientBackground[] = [
 ];
 
 /** Mirrors `ZoomPreset::params()` in crates/frostcap-core/src/autozoom.rs. */
-export const ZOOM_PRESETS: Record<ZoomPreset, { scale: number; easing: Easing; transitionMs: number; label: string }> = {
-  gentle: { scale: 1.5, easing: "easeInOutCubic", transitionMs: 900, label: "Gentle" },
-  balanced: { scale: 1.8, easing: "easeInOutCubic", transitionMs: 650, label: "Balanced" },
-  snappy: { scale: 2.2, easing: "easeOutQuint", transitionMs: 350, label: "Snappy" },
+export const ZOOM_PRESETS: Record<ZoomPreset, { scale: number; easing: Easing; transitionMs: number }> = {
+  gentle: { scale: 1.5, easing: "easeInOutCubic", transitionMs: 900 },
+  balanced: { scale: 1.8, easing: "easeInOutCubic", transitionMs: 650 },
+  snappy: { scale: 2.2, easing: "easeOutQuint", transitionMs: 350 },
 };
 
 /** Defaults for UI-only style fields; Rust-backed fields are overwritten from the project. */
@@ -30,7 +30,22 @@ export function defaultStyle(): ProjectStyle {
     zoom: { preset: "balanced", scale: zp.scale, easing: zp.easing, transitionMs: zp.transitionMs },
     cursor: { visible: true, smooth: true, smoothing: 0.6, size: 1, clickRipple: true, motionBlur: 0.3 },
     keys: { show: false },
-    webcam: { enabled: false, shape: "circle", size: 0.22, position: "bottom-right" },
+    webcam: {
+      enabled: false,
+      shape: "circle",
+      size: 0.22,
+      position: "bottom-right",
+      margin: 28 / 1080,
+      borderWidth: 0,
+      borderColor: "#ffffff",
+      mirror: false,
+      brightness: 0,
+      contrast: 1,
+      saturation: 1,
+      shadow: 0.4,
+      chromaKey: { enabled: false, color: "#00ff00", similarity: 0.4, smoothness: 0.1, spill: 0.5 },
+      background: { kind: "none", color: "#11141c", gradient: "linear-gradient(135deg,#a1c4fd,#c2e9fb)", blur: 0.5 },
+    },
     audio: {
       noiseGate: true,
       noiseGateThreshold: -50,
@@ -49,9 +64,5 @@ export function gradientCss(g: GradientBackground): string {
   return g.stops.length === 1 ? g.stops[0] : `linear-gradient(${g.angle}deg, ${g.stops.join(", ")})`;
 }
 
-export const EASINGS: { value: Easing; label: string }[] = [
-  { value: "easeInOutCubic", label: "Ease in-out" },
-  { value: "easeOutQuint", label: "Ease out" },
-  { value: "spring", label: "Spring" },
-  { value: "linear", label: "Linear" },
-];
+/** Labels come from the catalog: `easing.<name>`. */
+export const EASINGS: Easing[] = ["easeInOutCubic", "easeOutQuint", "spring", "linear"];

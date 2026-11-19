@@ -20,12 +20,18 @@
 #![warn(missing_docs)]
 
 pub mod autozoom;
+pub mod canvas;
 pub mod error;
+pub mod hdr;
 pub mod mp4;
 pub mod project;
 pub mod recent;
+pub mod settings;
 pub mod timeline;
+pub mod wav;
 
+#[cfg(windows)]
+pub mod affinity;
 #[cfg(windows)]
 pub mod audio;
 #[cfg(windows)]
@@ -36,6 +42,10 @@ pub mod com;
 pub mod dialogs;
 #[cfg(windows)]
 pub mod disk;
+#[cfg(windows)]
+pub mod displaycfg;
+#[cfg(windows)]
+pub mod hdr_gpu;
 #[cfg(windows)]
 pub mod hotkeys;
 #[cfg(windows)]

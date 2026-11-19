@@ -14,7 +14,8 @@ export type Ms = number;
 
 // ---------------------------------------------------------------- sources
 
-export type SourceKind = "display" | "window" | "region";
+/** `allDisplays`: every monitor as one canvas (only listed when the backend can encode it). */
+export type SourceKind = "display" | "window" | "region" | "allDisplays";
 
 export interface Rect {
   x: number;
@@ -74,6 +75,7 @@ export interface RecordingResult {
 }
 
 export interface Issue {
+  /** disk_full, source_gone, no_h264, invalid_path, invalid_project, permission, io, internal, and `cancelled` (the user declined a native confirmation). */
   code: string;
   message: string;
 }
@@ -151,9 +153,78 @@ export interface GradientBackground {
 }
 
 export type ZoomPreset = "gentle" | "balanced" | "snappy";
-export type WindowFrame = "none" | "minimal" | "windows" | "macos";
+export type WindowFrame = "none" | "minimal" | "windows" | "macos" | "laptop" | "phone";
 export type WebcamShape = "circle" | "rounded" | "square";
 export type Corner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
+export type AnnotationKind = "arrow" | "text" | "rect" | "ellipse" | "highlight" | "spotlight" | "blur" | "pixelate";
+
+/** Drawn over the screen content (coordinates 0..1 of the content, so they follow the zoom). Mirrors Rust `Annotation`. */
+export interface Annotation {
+  id: string;
+  kind: AnnotationKind;
+  start: Ms;
+  end: Ms;
+  /** Box (or arrow start), 0..1. */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Arrow end. */
+  x2: number;
+  y2: number;
+  color: string;
+  strokeWidth: number;
+  fill: boolean;
+  text: string;
+  fontSize: number;
+  opacity: number;
+  /** blur radius / pixel block size */
+  strength: number;
+  /** spotlight darkening */
+  dim: number;
+  cornerRadius: number;
+  fadeMs: Ms;
+}
+
+/** Playback speed on the source clock (cuts apply first). Mirrors Rust `edits.speed`. */
+export interface SpeedSegment {
+  id: string;
+  start: Ms;
+  end: Ms;
+  /** 0.25..4 */
+  speed: number;
+}
+
+export type WebcamBackgroundKind = "none" | "color" | "gradient" | "image" | "blur";
+
+export interface WebcamStyle {
+  enabled: boolean;
+  shape: WebcamShape;
+  size: number;
+  position: Corner;
+  /** Fraction of the output height. */
+  margin: number;
+  /** px at 1080p */
+  borderWidth: number;
+  borderColor: string;
+  mirror: boolean;
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  shadow: number;
+  chromaKey: { enabled: boolean; color: string; similarity: number; smoothness: number; spill: number };
+  /** Replaces the keyed-out area; only applies while chromaKey.enabled. */
+  background: { kind: WebcamBackgroundKind; color: string; gradient: string; image?: string; blur: number };
+}
+
+export interface BackgroundImage {
+  /** Basename inside the project folder (from import_background). */
+  file: string;
+  fit: "cover" | "contain";
+  /** 0..100 */
+  blur: number;
+}
 
 export interface ProjectStyle {
   /** Rust `style.background` (CSS gradient string). */
@@ -189,7 +260,9 @@ export interface ProjectStyle {
   };
   /** Rust `showKeys`. */
   keys: { show: boolean };
-  webcam: { enabled: boolean; shape: WebcamShape; size: number; position: Corner };
+  webcam: WebcamStyle;
+  /** Optional picture behind the framed screen; absent when unset. */
+  backgroundImage?: BackgroundImage;
   audio: {
     noiseGate: boolean;
     noiseGateThreshold: number;
@@ -241,6 +314,8 @@ export interface Project {
   keys: KeyEvent[];
   focus: FocusChange[];
   zoomSegments: ZoomSegment[];
+  annotations: Annotation[];
+  speed: SpeedSegment[];
   clips: Clip[];
   captions: CaptionCue[];
   style: ProjectStyle;
@@ -268,7 +343,8 @@ export interface RecentProject {
 // ----------------------------------------------------------------- export
 
 export type AspectPreset = "16:9" | "9:16" | "1:1";
-export type ExportFormat = "mp4" | "gif";
+/** `av1` (AV1 + AAC in MP4) is only offered when `encoder_capabilities().formats` lists it. */
+export type ExportFormat = "mp4" | "gif" | "av1";
 export type ExportPresetId = WireLegacyPreset;
 export type OutputPreset = WireOutputPreset;
 
@@ -291,6 +367,8 @@ export interface ExportResult {
 
 export interface ExportProgress {
   jobId: string;
+  /** Only for export_batch: which job of the batch. */
+  jobIndex?: number;
   progress: number;
   stage: string;
 }

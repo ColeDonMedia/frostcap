@@ -80,18 +80,29 @@ encoding are our own code on the `windows` crate (same 0.62 major as Tauri):
 
 ### Start latency
 
-Measured on the dev machine (2560x1440, `examples/record.rs`):
+Measured on the dev machine (2560x1440, release build, `examples/record.rs`):
 
-| | before | now |
+| | wave 1 | now (release) |
 |---|---|---|
-| first frame after `start` returns | ~3.5 s gap (MediaTranscoder) | 0 ms |
-| `start` (cold process) | ~3.5 s | 2.9-3.4 s |
-| `start` after `recorder::prewarm` | – | ~1.6 s |
+| first frame after `start` returns | 0 ms | 0 ms |
+| `start` (cold process) | 2.9-3.4 s (2854 ms measured) | 1835 ms |
+| `start` after `recorder::prewarm` | ~1.6 s (1389 ms measured) | 1327-1458 ms |
 
-The cost is D3D11 device creation (~1 s cold on this machine) plus the H.264
-encoder MFT (~0.9-1.7 s). The screen pipeline now starts in parallel with
-audio/webcam/input, the app prewarms D3D/MF at launch, and the countdown in the
-UI can hide the rest. Audio/video offsets no longer depend on start order.
+Where the time went (instrumented): the provisional `project.json` write (two
+fsyncs, ~0.75 s) sat before the screen thread even started; it now runs on a
+background thread (`ProvisionalSave`). The D3D device is shared across sessions
+(`screen::shared_device`), and the encoder is created on its own thread while the
+WGC pools and sessions are set up. What remains is the hardware H.264 encoder MFT
+(`SetInputMediaType`, ~1.0-1.3 s even after prewarm): Media Foundation cannot hand
+an encoder instance from one sink writer to the next, so it is the floor without
+a custom byte-stream proxy. The countdown in the UI can hide the rest. Audio/video offsets
+do not depend on start order.
+
+An all-displays canvas wider than 4096 px (two 1440p monitors = 5120 px) made
+the encoder initialize for ~13 s and fall behind (5 frames in 4 s). The canvas is
+now scaled down to at most 4096 px per side and 36 864 macroblocks
+(`canvas::fit_scale`; 5120x1440 becomes 4096x1152), which starts in ~2 s (debug build)
+and keeps up (231 frames in 4.2 s on a scrolling console).
 
 ## Timeline, pause and sync
 

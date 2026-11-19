@@ -16,8 +16,8 @@
 #
 # The binaries are NOT code-signed by this workflow. See docs/RELEASING.md.
 #
-# Action pins: resolved with `git ls-remote` on 2026-11-18. MAINTAINER: verify each
-# SHA against the upstream release before the first release.
+# Action pins: resolved with `git ls-remote` on 2026-11-18 and verified against the
+# upstream tag commits (annotated tags via the peeled ^{} commit).
 name: Release
 
 on:

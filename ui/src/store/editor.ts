@@ -1,10 +1,15 @@
 import { create } from "zustand";
-import type { Clip, Project, ProjectStyle, ZoomSegment, CaptionCue } from "../types";
+import type { Annotation, AnnotationKind, Clip, Project, ProjectStyle, SpeedSegment, ZoomSegment, CaptionCue } from "../types";
 import { backend, toBackendError } from "../backend";
+import { t } from "../i18n";
 import { useApp } from "./app";
 import { clamp, uid } from "../lib/format";
+import { duplicateAnnotation, newAnnotation } from "../lib/annotations";
+import { addSpeedSegment, outputLength, outputTime, resizeSpeed } from "../lib/speed";
+import { LIMITS } from "../backend";
+import { removeRanges, type CutRange } from "../lib/cuts";
 
-export type Selection = { kind: "zoom" | "clip" | "caption"; id: string } | null;
+export type Selection = { kind: "zoom" | "clip" | "caption" | "annotation" | "speed"; id: string } | null;
 
 const HISTORY_LIMIT = 200;
 const COALESCE_MS = 900;
@@ -25,6 +30,14 @@ interface EditorState {
   playhead: number;
   playing: boolean;
   selection: Selection;
+  /** Active annotation tool (draw on the preview), or null for select/move. */
+  tool: AnnotationKind | null;
+  /** Webcam chroma-key eyedropper: the next click on the webcam bubble in the preview samples the key colour. */
+  eyedropper: boolean;
+  /** "Suggest cuts" results: shown on the timeline, never applied until accepted. */
+  proposals: CutRange[] | null;
+  /** Annotation whose text is being edited inline on the preview. */
+  textEdit: string | null;
   snap: boolean;
   /** Timeline zoom: pixels per second. */
   pxPerSec: number;
@@ -48,6 +61,14 @@ interface EditorState {
   setPlaying: (p: boolean) => void;
   togglePlay: () => void;
   select: (s: Selection) => void;
+  setTool: (t: AnnotationKind | null) => void;
+  setEyedropper: (on: boolean) => void;
+  setProposals: (r: CutRange[] | null) => void;
+  acceptProposal: (startMs: number) => void;
+  rejectProposal: (startMs: number) => void;
+  acceptAllProposals: () => void;
+  dismissProposals: () => void;
+  setTextEdit: (id: string | null) => void;
   setSnap: (s: boolean) => void;
   setPxPerSec: (v: number) => void;
 
@@ -57,8 +78,28 @@ interface EditorState {
   updateZoom: (id: string, patch: Partial<ZoomSegment>, opts?: { history?: boolean; coalesce?: string }) => void;
   updateClip: (id: string, patch: Partial<Clip>, opts?: { history?: boolean }) => void;
   setCaptions: (cues: CaptionCue[]) => void;
+  /** Adds an annotation at the playhead from a drag between two content points (0..1); null at the limit. */
+  addAnnotation: (kind: AnnotationKind, p1: { x: number; y: number }, p2: { x: number; y: number }) => string | null;
+  updateAnnotation: (id: string, patch: Partial<Annotation>, opts?: { history?: boolean; coalesce?: string }) => void;
+  duplicateSelection: () => void;
+  addSpeedAtPlayhead: (speed?: number) => boolean;
+  updateSpeed: (id: string, patch: Partial<SpeedSegment>, opts?: { history?: boolean; coalesce?: string }) => void;
   /** Toast with an Undo action for the edit that just happened (no-op if more edits follow). */
   notifyUndoable: (text: string) => void;
+}
+
+/** Applies suggested cuts as one history step. When they would remove the whole recording nothing changes and the user is told. */
+function applyCutsImpl(ranges: CutRange[]): boolean {
+  const st = useEditor.getState();
+  const p = st.project;
+  if (!p) return false;
+  const next = removeRanges(p.clips, ranges);
+  if (next === p.clips) {
+    useApp.getState().showToast(t("timeline.cutAll"), "warning");
+    return false;
+  }
+  st.apply((q) => ({ ...q, clips: next }));
+  return true;
 }
 
 let lastCoalesce: { key: string; at: number } | null = null;
@@ -77,6 +118,10 @@ export const useEditor = create<EditorState>((set, get) => ({
   playhead: 0,
   playing: false,
   selection: null,
+  tool: null,
+  eyedropper: false,
+  proposals: null,
+  textEdit: null,
   snap: true,
   pxPerSec: 40,
   past: [],
@@ -84,7 +129,7 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   async load(path) {
     if (get().path === path && get().project) return;
-    set({ loading: true, error: null, failedPath: null, playing: false });
+    set({ proposals: null, loading: true, error: null, failedPath: null, playing: false });
     try {
       const project = await backend.loadProject(path);
       set({
@@ -205,6 +250,40 @@ export const useEditor = create<EditorState>((set, get) => ({
   select(selection) {
     set({ selection });
   },
+  setTool(tool) {
+    set({ tool, eyedropper: false });
+  },
+  setEyedropper(eyedropper) {
+    set({ eyedropper, ...(eyedropper ? { tool: null } : {}) });
+  },
+  setTextEdit(textEdit) {
+    set({ textEdit });
+  },
+  setProposals(proposals) {
+    set({ proposals: proposals && proposals.length ? proposals : null });
+  },
+  acceptProposal(startMs) {
+    const applyCuts = applyCutsImpl;
+    const { proposals } = get();
+    const r = proposals?.find((x) => x.startMs === startMs);
+    if (!proposals || !r) return;
+    if (!applyCuts([r])) return;
+    get().setProposals(proposals.filter((x) => x !== r));
+  },
+  rejectProposal(startMs) {
+    const { proposals } = get();
+    if (proposals) get().setProposals(proposals.filter((x) => x.startMs !== startMs));
+  },
+  acceptAllProposals() {
+    const applyCuts = applyCutsImpl;
+    const { proposals } = get();
+    if (!proposals) return;
+    if (!applyCuts(proposals)) return;
+    set({ proposals: null });
+  },
+  dismissProposals() {
+    set({ proposals: null });
+  },
   setSnap(snap) {
     set({ snap });
   },
@@ -230,6 +309,10 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (!selection || !project) return;
     if (selection.kind === "zoom") {
       get().apply((p) => ({ ...p, zoomSegments: p.zoomSegments.filter((z) => z.id !== selection.id) }));
+    } else if (selection.kind === "annotation") {
+      get().apply((p) => ({ ...p, annotations: p.annotations.filter((a) => a.id !== selection.id) }));
+    } else if (selection.kind === "speed") {
+      get().apply((p) => ({ ...p, speed: p.speed.filter((s) => s.id !== selection.id) }));
     } else if (selection.kind === "clip") {
       if (project.clips.length <= 1) return; // keep at least one clip
       get().apply((p) => ({ ...p, clips: p.clips.filter((c) => c.id !== selection.id) }));
@@ -237,7 +320,17 @@ export const useEditor = create<EditorState>((set, get) => ({
       get().apply((p) => ({ ...p, captions: p.captions.filter((c) => c.id !== selection.id) }));
     }
     set({ selection: null });
-    get().notifyUndoable(selection.kind === "zoom" ? "Zoom segment deleted" : selection.kind === "clip" ? "Clip deleted" : "Caption deleted");
+    get().notifyUndoable(
+      selection.kind === "zoom"
+        ? t("editor.zoomDeleted")
+        : selection.kind === "clip"
+          ? t("editor.clipDeleted")
+          : selection.kind === "annotation"
+            ? t("editor.annotationDeleted")
+            : selection.kind === "speed"
+              ? t("editor.speedDeleted")
+              : t("editor.captionDeleted"),
+    );
   },
 
   addZoomAtPlayhead() {
@@ -272,10 +365,61 @@ export const useEditor = create<EditorState>((set, get) => ({
     get().apply((p) => ({ ...p, captions: cues }));
   },
 
+  addAnnotation(kind, p1, p2) {
+    const { project, playhead } = get();
+    if (!project || project.annotations.length >= LIMITS.maxAnnotations) return null;
+    const start = Math.round(playhead);
+    const end = Math.min(project.media.durationMs, start + 3000);
+    const a = newAnnotation(kind, uid("ann"), start, Math.max(end, start + 500), p1, p2);
+    get().apply((p) => ({ ...p, annotations: [...p.annotations, a] }));
+    set({ selection: { kind: "annotation", id: a.id }, tool: null });
+    return a.id;
+  },
+
+  updateAnnotation(id, patch, opts) {
+    get().apply((p) => ({ ...p, annotations: p.annotations.map((a) => (a.id === id ? { ...a, ...patch } : a)) }), opts ?? { coalesce: `ann.${id}.${Object.keys(patch).join(",")}` });
+  },
+
+  duplicateSelection() {
+    const { selection, project } = get();
+    if (!project || selection?.kind !== "annotation" || project.annotations.length >= LIMITS.maxAnnotations) return;
+    const src = project.annotations.find((a) => a.id === selection.id);
+    if (!src) return;
+    const copy = duplicateAnnotation(src, uid("ann"));
+    get().apply((p) => ({ ...p, annotations: [...p.annotations, copy] }));
+    set({ selection: { kind: "annotation", id: copy.id } });
+  },
+
+  addSpeedAtPlayhead(speed = 2) {
+    const { project, playhead } = get();
+    if (!project) return false;
+    const start = Math.max(0, Math.round(playhead));
+    const next = addSpeedSegment(project.speed, start, Math.min(project.media.durationMs, start + 2000), speed, project.media.durationMs);
+    if (!next) return false;
+    const seg = next.find((s) => s.start === start && !project.speed.includes(s));
+    if (!seg) return false;
+    get().apply((p) => ({ ...p, speed: next }));
+    set({ selection: { kind: "speed", id: seg.id } });
+    return true;
+  },
+
+  updateSpeed(id, patch, opts) {
+    get().apply(
+      (p) => {
+        const { speed: sp, start, end } = patch;
+        let list = p.speed;
+        if (start !== undefined || end !== undefined) list = resizeSpeed(list, id, { start, end }, p.media.durationMs);
+        if (sp !== undefined) list = list.map((s) => (s.id === id ? { ...s, speed: clamp(sp, LIMITS.speed[0], LIMITS.speed[1]) } : s));
+        return { ...p, speed: list };
+      },
+      opts ?? { coalesce: `speed.${id}.${Object.keys(patch).join(",")}` },
+    );
+  },
+
   notifyUndoable(text) {
     const after = get().project;
     useApp.getState().showToast(text, "info", {
-      label: "Undo",
+      label: t("common.undo"),
       run: () => {
         if (get().project === after) get().undo();
       },
@@ -286,7 +430,16 @@ export const useEditor = create<EditorState>((set, get) => ({
 function fixSelection() {
   const { selection, project } = useEditor.getState();
   if (!selection || !project) return;
-  const list = selection.kind === "zoom" ? project.zoomSegments : selection.kind === "clip" ? project.clips : project.captions;
+  const list =
+    selection.kind === "zoom"
+      ? project.zoomSegments
+      : selection.kind === "clip"
+        ? project.clips
+        : selection.kind === "annotation"
+          ? project.annotations
+          : selection.kind === "speed"
+            ? project.speed
+            : project.captions;
   if (!list.some((x) => x.id === selection.id)) useEditor.setState({ selection: null });
 }
 
@@ -311,16 +464,10 @@ export function cursorAt(p: Project, t: number): { x: number; y: number } {
 
 /** Total output duration (sum of kept clips). */
 export function outputDuration(p: Project): number {
-  return p.clips.reduce((s, c) => s + (c.end - c.start), 0);
+  return outputLength(p.clips, p.speed ?? []);
 }
 
 /** Map a source time to output time (time spent in clips before t). */
 export function sourceToOutput(p: Project, t: number): number {
-  let acc = 0;
-  for (const c of p.clips) {
-    if (t >= c.end) acc += c.end - c.start;
-    else if (t > c.start) return acc + (t - c.start);
-    else break;
-  }
-  return acc;
+  return outputTime(p.clips, p.speed ?? [], t);
 }

@@ -76,6 +76,14 @@ impl SourceArg {
     }
 }
 
+/// `launch_options` response.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchOptions {
+    /// The exe was started with `--selftest`.
+    pub selftest: bool,
+}
+
 /// `start_recording` response.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -158,6 +166,82 @@ pub struct ExportProgress {
     pub progress: f64,
     /// Stage name (`copying`, `decoding`, `rendering`, `encoding`, `muxing`, `done`...).
     pub stage: String,
+    /// Index of the job inside an `export_batch` (absent for `export_project`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_index: Option<usize>,
+}
+
+/// `import_background` response.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportBackgroundResponse {
+    /// Basename inside the project folder (`background-<hash>.png|jpg`).
+    pub file: String,
+}
+
+/// `suggest_cuts` response.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestCutsResponse {
+    /// Suggested cuts (`[startMs, endMs)` removed), ascending, non-overlapping.
+    pub ranges: Vec<frostcap_core::project::TrimRange>,
+}
+
+/// One job's outcome in an `export_batch` response.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchItem {
+    /// Index into the request's `jobs`.
+    pub index: usize,
+    /// Output file of this job.
+    pub out_path: PathBuf,
+    /// The file was written.
+    pub ok: bool,
+    /// Bytes written (when `ok`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    /// Preset rendered (when `ok`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<frostcap_export::OutputPreset>,
+    /// Why the job failed (when not `ok`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<CommandError>,
+}
+
+/// `export_batch` response.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchResponse {
+    /// Job id (cancel with `cancel_export`).
+    pub job_id: String,
+    /// One entry per requested job, in order.
+    pub results: Vec<BatchItem>,
+}
+
+/// Pair each requested output with its result.
+pub fn batch_items(outs: &[PathBuf], results: Vec<Result<ExportResult, Error>>) -> Vec<BatchItem> {
+    outs.iter()
+        .zip(results)
+        .enumerate()
+        .map(|(index, (out, r))| match r {
+            Ok(r) => BatchItem {
+                index,
+                out_path: r.out_path,
+                ok: true,
+                bytes: Some(r.bytes),
+                output: r.output,
+                error: None,
+            },
+            Err(e) => BatchItem {
+                index,
+                out_path: out.clone(),
+                ok: false,
+                bytes: None,
+                output: None,
+                error: Some(e.into()),
+            },
+        })
+        .collect()
 }
 
 /// `export_project` response.
@@ -210,6 +294,7 @@ mod tests {
     use frostcap_core::project::{ProjectStatus, Rect, samples};
     use frostcap_core::recent::RecentProject;
     use frostcap_core::region::RegionSelection;
+    use frostcap_core::settings::CaptureSettings;
     use frostcap_core::sources::{
         MonitorInfo, NormRect, SourceItem, SourceItemKind, SourceList, WindowInfo,
     };
@@ -449,6 +534,85 @@ mod tests {
                 ),
             ),
             (
+                "commands/import_background".into(),
+                cmd(
+                    json!({ "projectPath": project_dir, "sourcePath": r"C:\Users\me\Pictures\wallpaper.png" }),
+                    v(&ImportBackgroundResponse {
+                        file: "background-0123456789abcdef.png".into(),
+                    }),
+                    Some(err(
+                        ErrorCode::InvalidPath,
+                        "invalid path: choose the image with the file dialog first",
+                    )),
+                ),
+            ),
+            (
+                "commands/pick_image".into(),
+                cmd(json!({}), json!(r"C:\Users\me\Pictures\wallpaper.png"), None),
+            ),
+            (
+                "commands/suggest_cuts".into(),
+                cmd(
+                    json!({ "projectPath": project_dir, "options": { "rmsThresholdDb": -45, "minIdleMs": 1500, "marginMs": 200, "cursorMinPx": 3 } }),
+                    v(&SuggestCutsResponse {
+                        ranges: vec![
+                            frostcap_core::project::TrimRange {
+                                start_ms: 4200,
+                                end_ms: 7800,
+                            },
+                            frostcap_core::project::TrimRange {
+                                start_ms: 12000,
+                                end_ms: 15500,
+                            },
+                        ],
+                    }),
+                    Some(err(
+                        ErrorCode::Internal,
+                        "minIdleMs must be 200..600000",
+                    )),
+                ),
+            ),
+            (
+                "commands/encoder_capabilities".into(),
+                cmd(
+                    json!({}),
+                    v(&frostcap_export::Capabilities::new(true, false, false)),
+                    None,
+                ),
+            ),
+            (
+                "commands/export_batch".into(),
+                cmd(
+                    json!({ "projectPath": project_dir, "jobs": [
+                        { "preset": { "aspect": "16:9", "width": 1920, "height": 1080, "fps": 60, "format": "mp4" }, "outPath": r"C:\Users\me\Videos\Frostcap\clip.mp4" },
+                        { "preset": { "aspect": "9:16", "width": 1080, "height": 1920, "fps": 30, "format": "mp4" }, "outPath": r"C:\Users\me\Videos\Frostcap\clip-vertical.mp4" }
+                    ], "jobId": "job-2" }),
+                    v(&BatchResponse {
+                        job_id: "job-2".into(),
+                        results: batch_items(
+                            &[
+                                PathBuf::from(r"C:\Users\me\Videos\Frostcap\clip.mp4"),
+                                PathBuf::from(r"C:\Users\me\Videos\Frostcap\clip-vertical.mp4"),
+                            ],
+                            vec![
+                                Ok(ExportResult {
+                                    out_path: r"C:\Users\me\Videos\Frostcap\clip.mp4".into(),
+                                    bytes: 4_812_345,
+                                    baked: true,
+                                    preset: frostcap_export::ExportPreset::Raw,
+                                    output: Some(frostcap_export::OutputPreset::default()),
+                                }),
+                                Err(Error::Invalid("job 2: this PC has no AV1 encoder (Media Foundation); pick another format".into())),
+                            ],
+                        ),
+                    }),
+                    Some(err(
+                        ErrorCode::InvalidPath,
+                        "invalid path: two jobs write the same file",
+                    )),
+                ),
+            ),
+            (
                 "commands/cancel_export".into(),
                 cmd(json!({ "jobId": "job-1" }), json!(true), None),
             ),
@@ -483,6 +647,49 @@ mod tests {
             (
                 "commands/pick_region".into(),
                 cmd(json!({}), v(&region), None),
+            ),
+            (
+                "commands/launch_options".into(),
+                cmd(json!({}), v(&LaunchOptions { selftest: false }), None),
+            ),
+            (
+                "commands/write_selftest_report".into(),
+                cmd(
+                    json!({ "report": "{\"ok\":true,\"steps\":[]}" }),
+                    Value::Null,
+                    None,
+                ),
+            ),
+            (
+                "commands/selftest_cleanup".into(),
+                cmd(
+                    json!({ "paths": [r"C:\Users\me\Videos\Frostcap\frostcap-selftest-k1.mp4"] }),
+                    Value::Null,
+                    None,
+                ),
+            ),
+            (
+                "commands/capture_settings".into(),
+                cmd(json!({}), v(&CaptureSettings::default()), None),
+            ),
+            (
+                "commands/set_capture_border".into(),
+                cmd(
+                    json!({ "enabled": false }),
+                    v(&CaptureSettings {
+                        capture_border: false,
+                        ..CaptureSettings::default()
+                    }),
+                    None,
+                ),
+            ),
+            (
+                "commands/set_exclude_own_windows".into(),
+                cmd(
+                    json!({ "enabled": true }),
+                    v(&CaptureSettings::default()),
+                    None,
+                ),
             ),
             (
                 "commands/default_output_dir".into(),
@@ -549,6 +756,18 @@ mod tests {
                     out_path: r"C:\Users\me\Videos\Frostcap\clip.mp4".into(),
                     progress: 0.5,
                     stage: "rendering".into(),
+                    job_index: None,
+                }),
+            ),
+            (
+                "events/export_batch_progress".into(),
+                v(&ExportProgress {
+                    job_id: "job-2".into(),
+                    path: project_dir.clone(),
+                    out_path: r"C:\Users\me\Videos\Frostcap\clip-vertical.mp4".into(),
+                    progress: 0.25,
+                    stage: "encoding".into(),
+                    job_index: Some(1),
                 }),
             ),
             ("project.sample".into(), v(&project)),

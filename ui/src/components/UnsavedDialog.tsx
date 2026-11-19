@@ -4,13 +4,14 @@ import { useGuard } from "../store/guard";
 import { useEditor } from "../store/editor";
 import { trapTab } from "../lib/focus";
 import { softSpring } from "./ui";
+import { t } from "../i18n";
 
 /** Save / Discard / Cancel when leaving a project with unsaved edits. */
 export function UnsavedDialog() {
   const pending = useGuard((s) => s.pending);
   const saving = useGuard((s) => s.saving);
   const resolve = useGuard((s) => s.resolve);
-  const name = useEditor((s) => s.project?.name ?? "this project");
+  const name = useEditor((s) => s.project?.name ?? t("unsaved.thisProject"));
   const saveRef = useRef<HTMLButtonElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
 
@@ -36,8 +37,6 @@ export function UnsavedDialog() {
     if (t >= 0) f[t].focus();
   };
 
-  const verb = pending?.kind === "close" ? "closing" : "opening another project";
-
   return (
     <AnimatePresence>
       {pending && (
@@ -56,20 +55,20 @@ export function UnsavedDialog() {
             transition={softSpring}
           >
             <h2 className="sheet__title" id="unsaved-title">
-              Unsaved changes
+              {t("unsaved.title")}
             </h2>
             <p className="page__sub" id="unsaved-desc" style={{ margin: 0 }}>
-              “{name}” has unsaved changes. Save them before {verb}?
+              {t(pending?.kind === "close" ? "unsaved.closing" : "unsaved.opening", { name })}
             </p>
             <div className="sheet__foot">
               <button type="button" className="btn" onClick={() => void resolve("cancel")} disabled={saving}>
-                Cancel
+                {t("common.cancel")}
               </button>
               <button type="button" className="btn" onClick={() => void resolve("discard")} disabled={saving}>
-                Discard
+                {t("common.discard")}
               </button>
               <button ref={saveRef} type="button" className="btn btn--primary" onClick={() => void resolve("save")} disabled={saving}>
-                {saving ? "Saving…" : "Save"}
+                {saving ? t("common.saving") : t("common.save")}
               </button>
             </div>
           </m.div>

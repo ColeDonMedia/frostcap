@@ -22,8 +22,9 @@
 ## Features
 
 **Record**
-- Record a whole monitor, a single window, or a region you draw, with a 3-2-1 countdown and the Windows capture border on.
-- Webcam, microphone and system audio, each on its own track, all on one clock.
+- Record a whole monitor, all monitors at once, a single window, or a region you draw, with a 3-2-1 countdown. The yellow Windows capture border can be turned off (Frostcap asks to confirm).
+- Frostcap's own windows are hidden from your recordings. HDR monitors are tone-mapped to normal SDR video.
+- Webcam, microphone and system audio, each on its own track, all on one clock (with drift correction for long sessions).
 - Pause and resume (paused spans are cut from every track). Global hotkeys: Ctrl+Alt+Shift+R start/stop, Ctrl+Alt+Shift+P pause (configurable).
 - Cursor path, clicks and window focus are recorded alongside the video so the cursor and zooms can be re-rendered later.
 - Optional keystroke capture for a key overlay: off by default; "shortcuts only" or "all keys" (with a password warning).
@@ -32,21 +33,24 @@
 **Edit**
 - Automatic zoom that follows your clicks and typing (gentle, balanced or snappy), with every zoom editable on the timeline.
 - Timeline with trims, splits, undo/redo and keyboard shortcuts; real video and audio preview with a waveform.
+- Speed regions (0.25x to 4x) and "Suggest cuts", which proposes silent, idle stretches for you to accept or reject one by one.
+- Annotations: arrows, text, rectangles, ellipses, highlights, spotlight, blur and pixelate, each with its own time range on the timeline.
 - Smooth, resizable cursor with motion blur and click ripples, or hide it.
-- Backgrounds (gradients), padding, rounded corners, shadow and window frames (none, minimal, Windows, macOS).
-- Webcam bubble (circle, rounded or square, any corner and size).
+- Backgrounds (gradients or your own image, with optional blur), padding, rounded corners, shadow and frames (none, minimal, Windows, macOS, laptop, phone).
+- Webcam bubble (circle, rounded or square, any corner, size and margin) with border, mirror, brightness/contrast/saturation, and green-screen removal with a colour, gradient, image or blurred background behind you.
 - Captions: import SRT/VTT, choose size, position and background.
 - Audio: per-track gain and mute, noise gate, high-pass filter and loudness normalisation for the mic.
 
 **Export**
 - GPU compositor (wgpu on DirectX 12) renders every edit into a new MP4 (H.264 + AAC through Windows Media Foundation, hardware encoder when available) or an animated GIF.
-- 16:9, 9:16 and 1:1 presets, resolution and frame rate options, progress and cancel. Falls back to software rendering when no GPU is available.
+- AV1 export (in MP4) when your PC has an AV1 encoder.
+- 16:9, 9:16 and 1:1 presets, resolution and frame rate options, progress and cancel. Batch export writes several sizes and formats in one go. Falls back to software rendering when no GPU is available.
 
 **Principles**
 - Free and MIT licensed: no watermarks, no paywalls, no account.
 - No network requests, no telemetry. Everything stays on your PC.
 - Only permissive open-source dependencies (checked in CI); no bundled codecs.
-- Glassmorphism interface in the Frostcap palette, with a solid mode for reduced transparency, light and dark themes, and full keyboard support.
+- Glassmorphism interface in the Frostcap palette, with a solid mode for reduced transparency, light and dark themes, and full keyboard support. Available in English, Spanish, German, French, Portuguese (Brazil) and Japanese.
 
 ## Screenshots
 
@@ -61,6 +65,18 @@
 **Light theme**
 
 ![Frostcap editor, light theme](assets/screenshots/editor-light.png)
+
+**Annotations:** draw arrows, boxes, highlights, spotlights, blur and text right on the preview.
+
+![Frostcap annotations](assets/screenshots/annotations.png)
+
+**Webcam effects:** green-screen removal with a replacement background, plus colour and border controls.
+
+![Frostcap webcam effects](assets/screenshots/webcam.png)
+
+**Batch export:** several sizes and formats in one go.
+
+![Frostcap batch export](assets/screenshots/batch-export.png)
 
 <sub>Screenshots use the built-in demo data (the browser preview mode), so the preview shows a demo scene instead of a real recording.</sub>
 
@@ -204,4 +220,4 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) first; it covers the dependency license 
 Frostcap is released under the [MIT License](LICENSE). Third-party components and their
 licenses are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
-The Frostcap name and logo: see the trademark note in [docs/LEGAL.md](docs/LEGAL.md#name-and-logo).
+The Frostcap name and logo are released under the same MIT license as the code (see [docs/LEGAL.md](docs/LEGAL.md#name-and-logo)).

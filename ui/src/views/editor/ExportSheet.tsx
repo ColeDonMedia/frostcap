@@ -1,29 +1,35 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { m } from "motion/react";
 import { X, Download, CheckCircle2, FolderOpen } from "lucide-react";
-import { backend, toBackendError } from "../../backend";
+import { backend, toBackendError, type EncoderCaps } from "../../backend";
+import { BatchPanel } from "./BatchPanel";
 import { useEditor, outputDuration } from "../../store/editor";
 import { useApp } from "../../store/app";
-import { Segmented, Select, softSpring } from "../../components/ui";
+import { Segmented, Select, ToggleRow, softSpring } from "../../components/ui";
 import type { AspectPreset, ExportFormat, OutputPreset } from "../../types";
 import { fmtClock } from "../../lib/format";
 import { trapTab } from "../../lib/focus";
+import { t, type MessageKey } from "../../i18n";
 
-const ASPECTS: { value: AspectPreset; label: string; hint: string; w: number; h: number }[] = [
-  { value: "16:9", label: "16:9", hint: "YouTube, docs", w: 48, h: 27 },
-  { value: "9:16", label: "9:16", hint: "Shorts, Reels", w: 22, h: 39 },
-  { value: "1:1", label: "1:1", hint: "Social feed", w: 34, h: 34 },
+const ASPECTS: { value: AspectPreset; label: string; hint: MessageKey; w: number; h: number }[] = [
+  { value: "16:9", label: "16:9", hint: "export.hint169", w: 48, h: 27 },
+  { value: "9:16", label: "9:16", hint: "export.hint916", w: 22, h: 39 },
+  { value: "1:1", label: "1:1", hint: "export.hint11", w: 34, h: 34 },
 ];
 
 /** Short edge of the output. "raw" = the original recording without edits (legacy preset). */
 type Quality = 720 | 1080 | 1440 | 2160 | "raw";
-const QUALITIES: { value: Quality; label: string }[] = [
+const qualities = (): { value: Quality; label: string }[] => [
   { value: 1080, label: "1080p" },
   { value: 1440, label: "1440p" },
-  { value: 2160, label: "4K" },
+  { value: 2160, label: t("export.q4k") },
   { value: 720, label: "720p" },
-  { value: "raw", label: "Original recording (no edits)" },
+  { value: "raw", label: t("export.raw") },
 ];
+
+/** Backend stage names are translated when known; anything else is shown as sent. */
+const KNOWN_STAGES = ["starting", "preparing", "audio", "rendering", "finalizing", "done"];
+const stageLabel = (stage: string) => (KNOWN_STAGES.includes(stage) ? t(`export.stage.${stage}` as MessageKey) : stage);
 
 export function dims(aspect: AspectPreset, short: number) {
   const long = Math.round((short * 16) / 9 / 2) * 2;
@@ -46,11 +52,24 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
   const [format, setFormat] = useState<ExportFormat>("mp4");
   const [outPath, setOutPath] = useState<string | null>(null);
   const [job, setJob] = useState<JobState | null>(null);
+  const [caps, setCaps] = useState<EncoderCaps | null>(null);
+  const [batch, setBatch] = useState(false);
+  const [batchRunning, setBatchRunning] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
   const aspectRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
 
-  const running = job?.status === "running";
+  useEffect(() => {
+    backend.encoderCapabilities().then(setCaps, () => setCaps(null));
+  }, []);
+  // A saved AV1 choice falls back to MP4 when this PC cannot encode AV1.
+  useEffect(() => {
+    if (caps && format === "av1" && !caps.formats.includes("av1")) setFormat("mp4");
+  }, [caps, format]);
+  /** Formats the encoder supports; AV1 only when the backend lists it. */
+  const formats: ExportFormat[] = (caps?.formats ?? ["mp4", "gif"]).filter((f): f is ExportFormat => f === "mp4" || f === "gif" || f === "av1");
+
+  const running = job?.status === "running" || batchRunning;
   const raw = quality === "raw";
   const duration = outputDuration(project);
   const gif = format === "gif";
@@ -62,7 +81,7 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
     }
   }, [gif]);
   // Picked path must match the format's extension.
-  useEffect(() => setOutPath((p) => (p && !p.toLowerCase().endsWith(`.${format}`) ? null : p)), [format]);
+  useEffect(() => setOutPath((p) => (p && !p.toLowerCase().endsWith(`.${format === "gif" ? "gif" : "mp4"}`) ? null : p)), [format]);
 
   const d = raw ? { width: project.media.width, height: project.media.height } : dims(aspect, quality);
   const preset: OutputPreset | "raw" = raw ? "raw" : { aspect, width: d.width, height: d.height, fps, format };
@@ -120,11 +139,11 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
   /** The backend only accepts export targets chosen in its save dialog. */
   const choose = async (): Promise<string | null> => {
     try {
-      const p = await backend.pickSavePath(safeName, format);
+      const p = await backend.pickSavePath(safeName, format === "gif" ? "gif" : "mp4");
       if (p) setOutPath(p);
       return p;
     } catch (e) {
-      reportIssue(e, "Choose location");
+      reportIssue(e, t("export.errChoose"));
       return null;
     }
   };
@@ -145,7 +164,7 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
       const be = toBackendError(e);
       const cancelled = /cancel/i.test(be.message);
       setJob((j) => ({ jobId, outPath: target, progress: j?.progress ?? 0, stage: "", status: cancelled ? "cancelled" : "error", message: be.message }));
-      if (!cancelled) reportIssue(be, "Export failed");
+      if (!cancelled) reportIssue(be, t("export.errFailed"));
     } finally {
       un();
     }
@@ -156,7 +175,7 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
     try {
       await backend.cancelExport(job.jobId);
     } catch (e) {
-      reportIssue(e, "Cancel");
+      reportIssue(e, t("export.errCancel"));
     }
   };
 
@@ -165,7 +184,7 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
     try {
       await backend.revealInFolder(job.outPath);
     } catch (e) {
-      reportIssue(e, "Show in folder");
+      reportIssue(e, t("export.errReveal"));
     }
   };
 
@@ -177,6 +196,7 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
         ref={dialog}
         className="sheet glass glass--strong"
         role="dialog"
+        data-testid="export-sheet"
         aria-modal="true"
         aria-labelledby={titleId}
         aria-busy={running || undefined}
@@ -189,22 +209,22 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
         <div className="sheet__head">
           <div>
             <h2 className="sheet__title" id={titleId}>
-              Export
+              {t("export.title")}
             </h2>
             <p className="page__sub" style={{ marginTop: 2 }}>
               {project.name} · {fmtClock(duration)}
             </p>
           </div>
-          <button type="button" className="iconbtn" aria-label="Close export" onClick={onClose} disabled={running}>
+          <button type="button" className="iconbtn" aria-label={t("export.close")} onClick={onClose} disabled={running}>
             <X size={18} />
           </button>
         </div>
 
         <div className="field">
           <span className="field__label" id="aspect-l">
-            Aspect ratio
+            {t("export.aspect")}
           </span>
-          <div className="aspects" role="radiogroup" aria-labelledby="aspect-l" ref={aspectRef} onKeyDown={running || raw ? undefined : onAspectKey}>
+          <div className="aspects" role="radiogroup" aria-labelledby="aspect-l" ref={aspectRef} onKeyDown={running || raw || batch ? undefined : onAspectKey}>
             {ASPECTS.map((a) => {
               const sel = aspect === a.value;
               return (
@@ -216,12 +236,12 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
                   tabIndex={sel ? 0 : -1}
                   className="aspect"
                   data-autofocus={sel ? true : undefined}
-                  disabled={running || raw}
+                  disabled={running || raw || batch}
                   onClick={() => setAspect(a.value)}
                 >
                   <span className="aspect__shape" style={{ width: a.w, height: a.h }} aria-hidden="true" />
                   {a.label}
-                  <small>{a.hint}</small>
+                  <small>{t(a.hint)}</small>
                 </button>
               );
             })}
@@ -230,38 +250,46 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
 
         <div className="row2">
           <Select<Quality>
-            label="Resolution"
+            label={t("export.resolution")}
             value={quality}
             onChange={setQuality}
             disabled={running}
-            options={QUALITIES.filter((q) => !gif || (q.value !== "raw" && q.value <= 1080))}
+            options={qualities().filter((q) => !gif || (q.value !== "raw" && q.value <= 1080))}
           />
           <Select<number>
-            label="Frame rate"
+            label={t("export.fps")}
             value={fps}
             onChange={setFps}
             disabled={running || raw}
-            options={(gif ? [10, 15, 24] : [24, 30, 60]).map((f) => ({ value: f, label: `${f} fps` }))}
+            options={(gif ? [10, 15, 24] : [24, 30, 60]).map((f) => ({ value: f, label: t("recorder.fpsOption", { fps: f }) }))}
           />
         </div>
 
         <div className="field">
-          <span className="field__label">Format</span>
+          <span className="field__label">{t("export.format")}</span>
           <Segmented<ExportFormat>
-            label="Format"
+            label={t("export.format")}
             value={format}
             onChange={setFormat}
-            disabled={running || raw}
-            options={[
-              { value: "mp4", label: "MP4 (H.264)" },
-              { value: "gif", label: "GIF" },
-            ]}
+            disabled={running || raw || batch}
+            options={formats.map((f) => ({ value: f, label: t(f === "mp4" ? "export.formatMp4" : f === "gif" ? "export.formatGif" : "export.av1") }))}
           />
+          {caps && !caps.formats.includes("av1") && (
+            <span className="field__hint" data-testid="av1-hint">
+              {t("export.av1Hint")}
+            </span>
+          )}
+          {batch && <span className="field__hint">{t("export.batchMode")}</span>}
+          <ToggleRow label={t("export.batchToggle")} checked={batch} onChange={setBatch} />
         </div>
 
+        {batch ? (
+          <BatchPanel formats={formats} quality={raw ? 1080 : (quality as number)} fps={fps} dims={dims} disabled={raw} onRunning={setBatchRunning} />
+        ) : (
+          <>
         <div className="field">
           <label className="field__label" htmlFor="export-out">
-            Save to
+            {t("export.saveTo")}
           </label>
           <div style={{ display: "flex", gap: 8 }}>
             <input
@@ -270,15 +298,15 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
               readOnly
               disabled={running}
               value={outPath ?? ""}
-              placeholder="Choose a location when you export"
+              placeholder={t("export.placeholder")}
               style={{ flex: 1, fontFamily: "var(--mono)", fontSize: 12.5 }}
             />
             <button type="button" className="btn" onClick={() => void choose()} disabled={running}>
-              Choose…
+              {t("export.choose")}
             </button>
           </div>
           <span className="field__hint">
-            {d.width}×{d.height} · {raw ? `${project.media.fps} fps · original file` : `${fps} fps · ${aspect}`}
+            {t("export.summary", { width: d.width, height: d.height, detail: raw ? t("export.originalFile", { fps: project.media.fps }) : t("export.rateAspect", { fps, aspect }) })}
           </span>
         </div>
 
@@ -288,19 +316,19 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
             <span className="field__label">
               {job?.status === "done" ? (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--ok)" }}>
-                  <CheckCircle2 size={15} aria-hidden="true" /> Exported
+                  <CheckCircle2 size={15} aria-hidden="true" /> {t("export.exported")}
                 </span>
               ) : job?.status === "error" ? (
-                <span style={{ color: "var(--danger)" }}>Export failed</span>
+                <span style={{ color: "var(--danger)" }}>{t("export.failed")}</span>
               ) : job?.status === "cancelled" ? (
-                "Cancelled"
+                t("export.cancelled")
               ) : (
-                `Exporting${job?.stage ? ` · ${job.stage}` : ""}`
+                job?.stage ? t("export.exportingStage", { stage: stageLabel(job.stage) }) : t("export.exporting")
               )}
             </span>
             <span className="field__value">{pct}%</span>
           </div>
-          <div className="progress" role="progressbar" aria-label="Export progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+          <div className="progress" role="progressbar" aria-label={t("export.progress")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
             <m.div className="progress__bar" animate={{ width: `${pct}%` }} transition={{ type: "spring", stiffness: 200, damping: 30 }} />
           </div>
           <span className="field__hint export-status__detail">
@@ -308,25 +336,30 @@ export function ExportSheet({ aspect: initialAspect, onClose }: { aspect: Aspect
           </span>
         </div>
 
+          </>
+        )}
+
         <div className="sheet__foot">
           {job?.status === "done" && (
             <button type="button" className="btn" onClick={() => void reveal()}>
-              <FolderOpen size={15} aria-hidden="true" /> Show in folder
+              <FolderOpen size={15} aria-hidden="true" /> {t("export.showFolder")}
             </button>
           )}
-          {running ? (
+          {running && !batch ? (
             <button type="button" className="btn" onClick={() => void cancel()}>
-              Cancel export
+              {t("export.cancelExport")}
             </button>
           ) : (
-            <button type="button" className="btn" onClick={onClose}>
-              {job?.status === "done" ? "Close" : "Cancel"}
+            <button type="button" className="btn" onClick={onClose} disabled={running}>
+              {job?.status === "done" || batch ? t("common.close") : t("common.cancel")}
             </button>
           )}
+          {!batch && (
           <button type="button" className="btn btn--primary" onClick={() => void run()} disabled={running}>
             <Download size={15} aria-hidden="true" />
-            {running ? "Exporting…" : job?.status === "done" ? "Export again" : "Export"}
+            {running ? t("export.running") : job?.status === "done" ? t("export.again") : t("export.title")}
           </button>
+          )}
         </div>
       </m.div>
     </m.div>

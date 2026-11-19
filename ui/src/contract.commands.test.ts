@@ -35,6 +35,8 @@ const stripUi = (back: WireProject, orig?: WireProject) => {
   if (c.edits) {
     if (!o || o.ui === undefined) delete c.edits.ui;
     if (!o || o.captions === undefined) delete c.edits.captions;
+    if (!o || o.annotations === undefined) delete c.edits.annotations;
+    if (!o || o.speed === undefined) delete c.edits.speed;
     if (!o || o.splits === undefined) delete c.edits.splits;
     for (const k of ["frame", "cursor", "webcam", "audio", "captions"] as const) if (!o || o.style?.[k] === undefined) delete c.edits.style[k];
   }

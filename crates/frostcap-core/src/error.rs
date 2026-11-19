@@ -79,6 +79,8 @@ pub enum ErrorCode {
     Permission,
     /// Other I/O.
     Io,
+    /// The user declined a confirmation.
+    Cancelled,
     /// Anything else.
     Internal,
 }
@@ -173,6 +175,14 @@ impl From<frostcap_project::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancelled_is_a_stable_snake_case_code() {
+        assert_eq!(
+            serde_json::to_string(&ErrorCode::Cancelled).unwrap(),
+            "\"cancelled\""
+        );
+    }
 
     #[test]
     fn codes_survive_thread_hops_and_are_never_guessed() {

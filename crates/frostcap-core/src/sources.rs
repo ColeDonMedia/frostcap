@@ -68,6 +68,8 @@ pub enum SourceItemKind {
     Display,
     /// A window.
     Window,
+    /// Every monitor as one canvas.
+    AllDisplays,
     /// A region of a monitor.
     Region,
 }
@@ -161,6 +163,8 @@ pub enum CaptureSource {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pid: Option<u32>,
     },
+    /// Every monitor, recorded as one canvas (the union of their virtual-desktop bounds).
+    AllDisplays,
     /// A rectangle of a monitor.
     #[serde(rename_all = "camelCase")]
     Region {
@@ -182,6 +186,9 @@ impl CaptureSource {
                 .parse()
                 .map_err(|_| Error::Invalid(format!("bad window id {id:?}")))?;
             return Ok(CaptureSource::Window { hwnd, pid: None });
+        }
+        if id == "all-displays" {
+            return Ok(CaptureSource::AllDisplays);
         }
         if id == "primary" {
             return Ok(CaptureSource::PrimaryMonitor);
@@ -330,6 +337,24 @@ pub fn list_windows() -> Result<Vec<WindowInfo>> {
         .collect())
 }
 
+/// The flat "All displays" entry for these monitor bounds, if there are 2+ monitors
+/// whose union can be laid out (see [`crate::canvas::layout`]).
+pub(crate) fn all_displays_item(bounds: &[Rect]) -> Option<SourceItem> {
+    if bounds.len() < 2 {
+        return None;
+    }
+    let l = crate::canvas::layout(bounds).ok()?;
+    Some(SourceItem {
+        id: "all-displays".into(),
+        kind: SourceItemKind::AllDisplays,
+        name: "All displays".into(),
+        width: l.bounds.width as u32,
+        height: l.bounds.height as u32,
+        thumbnail: None,
+        source: CaptureSource::AllDisplays,
+    })
+}
+
 /// Enumerate monitors and windows. With `thumbnails`, each flat item gets a
 /// small PNG preview captured with a single WGC frame (bounded total time).
 pub fn list_sources(thumbnails: bool) -> Result<SourceList> {
@@ -346,6 +371,9 @@ pub fn list_sources(thumbnails: bool) -> Result<SourceList> {
             thumbnail: None,
             source: CaptureSource::Monitor { id: m.id.clone() },
         })
+        .chain(all_displays_item(
+            &monitors.iter().map(|m| m.bounds).collect::<Vec<_>>(),
+        ))
         .chain(windows.iter().map(|w| SourceItem {
             id: format!("window:{}", w.hwnd),
             kind: SourceItemKind::Window,
@@ -362,7 +390,12 @@ pub fn list_sources(thumbnails: bool) -> Result<SourceList> {
     if thumbnails {
         let targets: Vec<Option<ScreenTarget>> = sources
             .iter()
-            .map(|s| resolve(&s.source).ok().map(|r| r.target))
+            .map(|s| {
+                resolve(&s.source)
+                    .ok()
+                    .map(|r| r.target)
+                    .filter(|t| !matches!(t, ScreenTarget::AllDisplays))
+            })
             .collect();
         let thumbs = crate::thumb::capture_thumbnails(&targets, 320);
         for (s, t) in sources.iter_mut().zip(thumbs) {
@@ -386,6 +419,8 @@ pub(crate) struct ResolvedSource {
     pub bounds: Rect,
     /// Crop inside the source (region capture), source pixels.
     pub crop: Option<Rect>,
+    /// Monitors of an all-displays capture and their canvas layout.
+    pub all: Option<(Vec<crate::screen::MonitorSrc>, crate::canvas::Layout)>,
 }
 
 fn find_monitor(id: &str) -> Result<Monitor> {
@@ -394,6 +429,11 @@ fn find_monitor(id: &str) -> Result<Monitor> {
         .into_iter()
         .find(|m| m.device_name().is_ok_and(|n| n == id))
         .ok_or_else(|| Error::SourceNotFound(format!("monitor {id}")))
+}
+
+/// Raw monitor handle of the monitor with GDI device name `id`.
+pub fn monitor_handle(id: &str) -> Option<usize> {
+    find_monitor(id).ok().map(|m| m.as_raw_hmonitor() as usize)
 }
 
 fn resolve_monitor(m: &Monitor, crop: Option<Rect>) -> Result<ResolvedSource> {
@@ -409,11 +449,43 @@ fn resolve_monitor(m: &Monitor, crop: Option<Rect>) -> Result<ResolvedSource> {
         name: monitor_name(m),
         bounds,
         crop,
+        all: None,
     })
 }
 
 pub(crate) fn resolve(source: &CaptureSource) -> Result<ResolvedSource> {
     match source {
+        CaptureSource::AllDisplays => {
+            let mut monitors = list_monitors()?;
+            // Smoke-test hook: record only the first N monitors (3 monitors exceed the encoder limit).
+            if let Some(n) = std::env::var("FROSTCAP_ALL_DISPLAYS_COUNT")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+            {
+                monitors.truncate(n.max(1));
+            }
+            let bounds: Vec<Rect> = monitors.iter().map(|m| m.bounds).collect();
+            let layout = crate::canvas::layout(&bounds)?;
+            let srcs = monitors
+                .iter()
+                .map(|m| {
+                    monitor_handle(&m.id)
+                        .map(|handle| crate::screen::MonitorSrc {
+                            handle,
+                            bounds: m.bounds,
+                        })
+                        .ok_or_else(|| Error::SourceNotFound(format!("monitor {}", m.id)))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(ResolvedSource {
+                kind: crate::project::SourceKind::Monitor,
+                target: ScreenTarget::AllDisplays,
+                name: "All displays".into(),
+                bounds: layout.bounds,
+                crop: None,
+                all: Some((srcs, layout)),
+            })
+        }
         CaptureSource::PrimaryMonitor => {
             let m = Monitor::primary().map_err(|e| Error::SourceNotFound(e.to_string()))?;
             resolve_monitor(&m, None)
@@ -459,6 +531,7 @@ pub(crate) fn resolve(source: &CaptureSource) -> Result<ResolvedSource> {
                 name: window.title().unwrap_or_default(),
                 bounds,
                 crop: None,
+                all: None,
             })
         }
     }
@@ -484,6 +557,46 @@ mod tests {
             }
         );
         assert!(CaptureSource::from_id("nope").is_err());
+    }
+
+    #[test]
+    fn all_displays_source_ids_and_wire_format() {
+        assert_eq!(
+            CaptureSource::from_id("all-displays").unwrap(),
+            CaptureSource::AllDisplays
+        );
+        let s = serde_json::to_string(&CaptureSource::AllDisplays).unwrap();
+        assert_eq!(s, r#"{"kind":"allDisplays"}"#);
+        let k = serde_json::to_string(&SourceItemKind::AllDisplays).unwrap();
+        assert_eq!(k, "\"allDisplays\"");
+        let item = all_displays_item(&[
+            Rect {
+                x: 0,
+                y: 0,
+                width: 2560,
+                height: 1440,
+            },
+            Rect {
+                x: -1920,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+        ])
+        .unwrap();
+        assert_eq!(
+            (item.id.as_str(), item.width, item.height),
+            ("all-displays", 4480, 1440)
+        );
+        assert!(
+            all_displays_item(&[Rect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1
+            }])
+            .is_none()
+        );
     }
 
     #[test]
@@ -558,6 +671,12 @@ mod tests {
         let list = list_sources(false).unwrap();
         assert!(!list.monitors.is_empty());
         assert!(list.monitors[0].primary);
-        assert_eq!(list.sources.len(), list.monitors.len() + list.windows.len());
+        // Displays and windows, plus the "All displays" entry when there are 2+ monitors.
+        let bounds: Vec<Rect> = list.monitors.iter().map(|m| m.bounds).collect();
+        let all = usize::from(all_displays_item(&bounds).is_some());
+        assert_eq!(
+            list.sources.len(),
+            list.monitors.len() + list.windows.len() + all
+        );
     }
 }

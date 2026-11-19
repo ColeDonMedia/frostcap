@@ -1,11 +1,11 @@
-import { lazy, Suspense, useEffect } from "react";
+import { Fragment, lazy, Suspense, useEffect } from "react";
 import { AnimatePresence, LazyMotion, MotionConfig, domAnimation, m } from "motion/react";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { Mesh } from "./components/Mesh";
 import { RecorderBar, Countdown } from "./components/RecorderBar";
 import RecorderView from "./views/RecorderView";
-import { useApp, type View } from "./store/app";
+import { useApp } from "./store/app";
 import { useApplyTheme } from "./lib/theme";
 import { useRecording } from "./store/recording";
 import { navShortcut } from "./lib/keys";
@@ -13,15 +13,16 @@ import { beforeUnload, requestClose } from "./store/guard";
 import { UnsavedDialog } from "./components/UnsavedDialog";
 import { Toasts } from "./components/Toasts";
 import { isTauri } from "./backend";
+import { t, useLocale } from "./i18n";
 
 // Code-split: editor (canvas renderer, timeline, inspector, export) and settings.
 const EditorView = lazy(() => import("./views/editor/EditorView"));
 const SettingsView = lazy(() => import("./views/SettingsView"));
 
-const TITLES: Record<View, string> = { recorder: "Record", editor: "Editor", settings: "Settings" };
-
 export default function App() {
   const { surface } = useApplyTheme();
+  // Language change remounts the tree so every string is re-translated; the editor is not mounted while in Settings.
+  const locale = useLocale();
   const view = useApp((s) => s.view);
   const setView = useApp((s) => s.setView);
   const projectPath = useApp((s) => s.projectPath);
@@ -74,18 +75,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    document.title = `Frostcap — ${TITLES[view]}`;
-  }, [view]);
+    document.title = `Frostcap — ${t(`view.${view}`)}`;
+  }, [view, locale]);
 
   return (
     <LazyMotion features={domAnimation} strict>
       <MotionConfig reducedMotion={surface === "solid" ? "always" : "user"}>
+        <Fragment key={locale}>
         <Mesh />
         <a className="skip-link" href="#main">
-          Skip to main content
+          {t("app.skip")}
         </a>
         <div className="app">
-          <TitleBar subtitle={TITLES[view]} />
+          <TitleBar subtitle={t(`view.${view}`)} />
           <div className="shell">
             <Sidebar />
             <main className="main" id="main" tabIndex={-1}>
@@ -101,7 +103,7 @@ export default function App() {
                   <Suspense
                     fallback={
                       <div className="loading">
-                        <div className="spinner" role="status" aria-label="Loading" />
+                        <div className="spinner" role="status" aria-label={t("app.loading")} />
                       </div>
                     }
                   >
@@ -118,6 +120,7 @@ export default function App() {
         <Countdown />
         <UnsavedDialog />
         <Toasts />
+        </Fragment>
       </MotionConfig>
     </LazyMotion>
   );

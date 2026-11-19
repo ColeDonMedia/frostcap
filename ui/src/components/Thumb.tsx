@@ -56,7 +56,7 @@ export function Thumb({ seed, kind = "display" }: { seed: string; kind?: SourceK
       </defs>
       <rect width="160" height="90" fill={`url(#g${id})`} />
       <rect width="160" height="90" fill={`url(#r${id})`} />
-      {kind === "display" && (
+      {(kind === "display" || kind === "allDisplays") && (
         <>
           {win(14, 12, 78, 56, 1)}
           {win(70, 26, 76, 52, 2)}

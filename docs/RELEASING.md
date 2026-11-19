@@ -49,8 +49,7 @@ The workflow has four jobs, each with only the permissions it needs:
    passed only through an environment variable), checks it matches `tauri.conf.json` and
    `Cargo.toml`, installs UI packages with `npm ci --ignore-scripts` (no npm cache), builds
    the UI, runs the Rust tests and the license-inventory check, builds the **NSIS installer**
-   with the Tauri CLI (`tauri.conf.json` keeps `bundle.active = false` for normal builds; the
-   workflow merges the overlay
+   with the Tauri CLI (the workflow merges the overlay
    `{"build":{"beforeBuildCommand":""},"bundle":{"active":true,"targets":["nsis"]}}` via
    `tauri build --config ... -- --locked`, so the already-built UI is not reinstalled and
    cargo refuses a stale `Cargo.lock`), copies `target/release/frostcap.exe` as the **portable exe**,
@@ -74,7 +73,24 @@ ui\node_modules\.bin\tauri.cmd build --bundles nsis --config $env:TEMP\release.c
 # -> target\release\bundle\nsis\Frostcap_X.Y.Z_x64-setup.exe and target\release\frostcap.exe
 ```
 
-The Tauri CLI downloads NSIS and its plugins from GitHub the first time it bundles.
+The Tauri CLI downloads NSIS and its plugins (from the tauri-apps GitHub releases) and the
+WebView2 bootstrapper (from Microsoft) the first time it bundles, into `%LOCALAPPDATA%\tauri`.
+
+**Building when C: is nearly full:** `scripts\build-installer.ps1` does the same build with
+`LOCALAPPDATA`, `APPDATA`, `TEMP` and `TMP` redirected to `.toolchain\home\` for that process
+only (nothing in your user/system environment changes). Note that the Tauri CLI finds its
+download cache (`...\AppData\Local\tauri`, about 10 MB) through the Windows known-folder API and
+ignores `LOCALAPPDATA`, so it is still written on C: during the build; the script deletes that
+folder afterwards if it did not exist before. It runs `npm ci --ignore-scripts` and
+the UI build itself, then bundles the NSIS installer:
+
+```powershell
+.\scripts\build-installer.ps1
+# -> target\release\bundle\nsis\Frostcap_X.Y.Z_x64-setup.exe and target\release\frostcap.exe (portable)
+```
+
+It never runs the installer. Do not run it while another process is using `ui\node_modules`
+(it reinstalls it).
 
 **npm install scripts are never run.** `ui/.npmrc` sets `ignore-scripts=true`, every
 `npm ci` in CI, the release workflow and `tauri.conf.json`'s `beforeBuildCommand` passes

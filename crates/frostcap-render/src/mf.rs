@@ -670,6 +670,27 @@ fn hns_for_frame(i: u64, fps: u32) -> i64 {
     (i * 10_000_000 / fps as u64) as i64
 }
 
+/// Video codec of an MP4 output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VideoCodec {
+    /// H.264 / AVC.
+    H264,
+    /// AV1 (needs an encoder MFT, see [`encoder_caps`]).
+    Av1,
+    /// VP9 (needs an encoder MFT).
+    Vp9,
+}
+
+impl VideoCodec {
+    fn subtype(self) -> GUID {
+        match self {
+            Self::H264 => MFVideoFormat_H264,
+            Self::Av1 => SUBTYPE_AV01,
+            Self::Vp9 => SUBTYPE_VP90,
+        }
+    }
+}
+
 impl Mp4Writer {
     /// Create `path` (MP4 container regardless of extension).
     pub fn create(
@@ -681,13 +702,40 @@ impl Mp4Writer {
         audio: bool,
         allow_hw: bool,
     ) -> Result<Self> {
+        Self::create_codec(
+            path,
+            width,
+            height,
+            fps,
+            bitrate,
+            audio,
+            allow_hw,
+            VideoCodec::H264,
+        )
+    }
+
+    /// Like [`Self::create`] with an explicit video codec. Only codecs that
+    /// [`encoder_caps`] reports should be requested; AV1/VP9 need a hardware
+    /// or extension encoder MFT and the MP4 sink must accept them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_codec(
+        path: &Path,
+        width: u32,
+        height: u32,
+        fps: u32,
+        bitrate: u32,
+        audio: bool,
+        allow_hw: bool,
+        codec: VideoCodec,
+    ) -> Result<Self> {
         if allow_hw {
-            if let Ok(w) = Self::create_with(path, width, height, fps, bitrate, audio, true) {
+            if let Ok(w) = Self::create_with(path, width, height, fps, bitrate, audio, true, codec)
+            {
                 return Ok(w);
             }
             let _ = std::fs::remove_file(path);
         }
-        Self::create_with(path, width, height, fps, bitrate, audio, false)
+        Self::create_with(path, width, height, fps, bitrate, audio, false, codec)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -699,6 +747,7 @@ impl Mp4Writer {
         bitrate: u32,
         audio: bool,
         hw: bool,
+        codec: VideoCodec,
     ) -> Result<Self> {
         unsafe {
             let a = attrs(4)?;
@@ -708,13 +757,15 @@ impl Mp4Writer {
 
             let out = MFCreateMediaType()?;
             out.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-            out.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
+            out.SetGUID(&MF_MT_SUBTYPE, &codec.subtype())?;
             out.SetUINT32(&MF_MT_AVG_BITRATE, bitrate)?;
             out.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
             out.SetUINT64(&MF_MT_FRAME_SIZE, pack(width, height))?;
             out.SetUINT64(&MF_MT_FRAME_RATE, pack(fps, 1))?;
             out.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack(1, 1))?;
-            out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32)?;
+            if codec == VideoCodec::H264 {
+                out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32)?;
+            }
             let video = writer.AddStream(&out)?;
 
             let inp = MFCreateMediaType()?;
@@ -903,5 +954,113 @@ impl Mp4Writer {
     pub fn finish(self) -> Result<()> {
         unsafe { self.writer.Finalize() }?;
         Ok(())
+    }
+}
+
+/// Video codecs that have an encoder MFT registered on this machine.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EncoderCaps {
+    /// H.264 (the exporter's only codec).
+    pub h264: bool,
+    /// VP9 (WebM capable).
+    pub vp9: bool,
+    /// AV1 (WebM capable).
+    pub av1: bool,
+}
+
+impl EncoderCaps {
+    /// Whether a WebM-capable encoder exists.
+    pub fn webm(&self) -> bool {
+        self.vp9 || self.av1
+    }
+}
+
+const SUBTYPE_VP90: GUID = GUID::from_u128(0x30395056_0000_0010_8000_00aa00389b71);
+const SUBTYPE_AV01: GUID = GUID::from_u128(0x31305641_0000_0010_8000_00aa00389b71);
+
+/// Friendly names of every video encoder MFT whose output type is `subtype`
+/// (hardware and software). Needs Media Foundation started (see [`MfGuard`]).
+fn encoder_names(subtype: GUID) -> Vec<String> {
+    let out = MFT_REGISTER_TYPE_INFO {
+        guidMajorType: MFMediaType_Video,
+        guidSubtype: subtype,
+    };
+    let mut list: *mut Option<IMFActivate> = std::ptr::null_mut();
+    let mut n = 0u32;
+    // SAFETY: MFTEnumEx fills `list` with `n` activates that we release and free.
+    unsafe {
+        if MFTEnumEx(
+            MFT_CATEGORY_VIDEO_ENCODER,
+            MFT_ENUM_FLAG_ALL,
+            None,
+            Some(&out),
+            &mut list,
+            &mut n,
+        )
+        .is_err()
+            || list.is_null()
+        {
+            return Vec::new();
+        }
+        let mut names = Vec::new();
+        for i in 0..n as usize {
+            if let Some(act) = (*list.add(i)).take() {
+                let mut buf = [0u16; 256];
+                let mut len = 0u32;
+                if act
+                    .GetString(&MFT_FRIENDLY_NAME_Attribute, &mut buf, Some(&mut len))
+                    .is_ok()
+                {
+                    names.push(String::from_utf16_lossy(&buf[..(len as usize).min(255)]));
+                } else {
+                    names.push("(unnamed)".into());
+                }
+            }
+        }
+        windows::Win32::System::Com::CoTaskMemFree(Some(list as *const _));
+        names
+    }
+}
+
+/// Which encoders Windows offers on this machine (initializes MF itself).
+pub fn encoder_caps() -> EncoderCaps {
+    let Ok(_g) = MfGuard::new() else {
+        return EncoderCaps::default();
+    };
+    EncoderCaps {
+        h264: !encoder_names(MFVideoFormat_H264).is_empty(),
+        vp9: !encoder_names(SUBTYPE_VP90).is_empty(),
+        av1: !encoder_names(SUBTYPE_AV01).is_empty(),
+    }
+}
+
+/// Names of the H.264 / VP9 / AV1 encoder MFTs found (diagnostics).
+pub fn encoder_report() -> Vec<(&'static str, Vec<String>)> {
+    let Ok(_g) = MfGuard::new() else {
+        return Vec::new();
+    };
+    vec![
+        ("H.264", encoder_names(MFVideoFormat_H264)),
+        ("VP9", encoder_names(SUBTYPE_VP90)),
+        ("AV1", encoder_names(SUBTYPE_AV01)),
+    ]
+}
+
+#[cfg(test)]
+mod caps_tests {
+    use super::*;
+
+    #[test]
+    fn encoder_enumeration_finds_h264_and_is_consistent() {
+        let caps = encoder_caps();
+        assert!(caps.h264, "Windows ships an H.264 encoder MFT");
+        let report = encoder_report();
+        assert_eq!(report.len(), 3);
+        // The capability flags agree with the enumerated names.
+        assert_eq!(caps.h264, !report[0].1.is_empty());
+        assert_eq!(caps.vp9, !report[1].1.is_empty());
+        assert_eq!(caps.av1, !report[2].1.is_empty());
+        assert_eq!(caps.webm(), caps.vp9 || caps.av1);
+        eprintln!("encoders: {report:?}");
     }
 }

@@ -33,6 +33,17 @@
     "allow-reveal-in-folder",
     "allow-hotkeys",
     "allow-set-hotkeys",
-    "allow-default-output-dir"
+    "allow-default-output-dir",
+    "allow-launch-options",
+    "allow-export-batch",
+    "allow-encoder-capabilities",
+    "allow-suggest-cuts",
+    "allow-pick-image",
+    "allow-import-background",
+    "allow-write-selftest-report",
+    "allow-selftest-cleanup",
+    "allow-capture-settings",
+    "allow-set-capture-border",
+    "allow-set-exclude-own-windows"
   ]
 }

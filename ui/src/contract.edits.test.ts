@@ -22,7 +22,7 @@ describe("typed edits: project.sample.json", () => {
   it("reads every typed group", () => {
     expect(p.style.frame).toBe("windows");
     expect(p.style.cursor).toMatchObject({ visible: true, smoothing: 0.5, motionBlur: 0.25, smooth: true });
-    expect(p.style.webcam).toEqual({ enabled: true, shape: "rounded", size: 0.25, position: "top-right" });
+    expect(p.style.webcam).toMatchObject({ enabled: true, shape: "rounded", size: 0.25, position: "top-right" });
     expect(p.style.audio).toEqual({ noiseGate: true, noiseGateThreshold: -45, highPass: true, highPassHz: 100, normalize: true, targetLufs: -16, micGain: 1, systemGain: 0.5 });
     expect(p.style.captions).toEqual({ enabled: true, fontSize: 44, position: "bottom", background: true });
     expect(p.captions.map(({ start, end, text }) => ({ start, end, text }))).toEqual([
@@ -61,7 +61,7 @@ describe("legacy v1 blob (fixtures/legacy/project.ui-v1.json)", () => {
   it("fills absent typed groups from the blob", () => {
     expect(p.style.frame).toBe("windows");
     expect(p.style.cursor).toMatchObject({ visible: false, smoothing: 0.25, motionBlur: 0.7 });
-    expect(p.style.webcam).toEqual({ enabled: true, shape: "rounded", size: 0.3, position: "top-left" });
+    expect(p.style.webcam).toMatchObject({ enabled: true, shape: "rounded", size: 0.3, position: "top-left" });
     expect(p.style.audio.micGain).toBe(0);
     expect(p.style.audio.systemGain).toBe(1.5);
     expect(p.style.captions).toEqual({ enabled: true, fontSize: 52, position: "top", background: false });
@@ -181,5 +181,60 @@ describe("trims and splits are whole milliseconds (serde u64 rejects fractions)"
     expect(splits).toEqual([1000]);
     expect(trims).toEqual([{ startMs: 2001, endMs: 2501 }]);
     for (const t of trims) expect(Number.isInteger(t.startMs) && Number.isInteger(t.endMs) && t.endMs >= t.startMs).toBe(true);
+  });
+});
+
+describe("editor v2 fields (fixtures/project.editor-v2.json)", () => {
+  const v2 = fx("project.editor-v2.json");
+  const p = fromWireProject(structuredClone(v2), "C:\p.frostcap");
+
+  it("round-trips exactly", () => {
+    const back = toWireProject(p);
+    if (v2.edits!.ui === undefined) delete back.edits!.ui; // the editor always adds its zoom defaults
+    expect(back).toEqual(v2);
+  });
+
+  it("reads annotations, speed, device frame, background image and webcam effects", () => {
+    expect(p.annotations.map((a) => a.kind)).toEqual(["arrow", "text", "rect", "ellipse", "highlight", "spotlight", "blur", "pixelate"]);
+    expect(p.annotations[0]).toMatchObject({ start: 0, end: 1500, x: 0.1, y: 0.2, x2: 0.7, y2: 0.6, strokeWidth: 4, fadeMs: 150 });
+    expect(p.speed.map((s) => [s.start, s.end, s.speed])).toEqual([
+      [500, 1000, 2],
+      [1000, 2000, 0.5],
+    ]);
+    expect(p.style.frame).toBe("laptop");
+    expect(p.style.backgroundImage).toEqual({ file: "background-0123456789abcdef.png", fit: "contain", blur: 12 });
+    expect(p.style.webcam).toMatchObject({ mirror: true, borderWidth: 4, borderColor: "#4ed2fb", chromaKey: { enabled: true }, background: { kind: "image", image: "background-0123456789abcdef.png" } });
+  });
+
+  it("projects without the new fields get the Rust defaults and leave backgroundImage out", () => {
+    const old = structuredClone(sample);
+    delete old.edits!.annotations;
+    delete old.edits!.speed;
+    const q = fromWireProject(old, "x");
+    expect(q.annotations).toEqual([]);
+    expect(q.speed).toEqual([]);
+    expect(toWireProject(q).edits!.style.backgroundImage).toBeUndefined();
+    expect(toWireProject(q).edits!.style.webcam!.background!.image).toBeUndefined();
+  });
+
+  it("clamps everything to the schema before saving", () => {
+    const q = structuredClone(p);
+    q.annotations[0] = { ...q.annotations[0], x: 9, strokeWidth: 999, fontSize: 1, opacity: Number.NaN, color: "red", fadeMs: 99999, text: "x".repeat(900), id: "i".repeat(200) };
+    q.speed = [
+      { id: "a", start: 0, end: 1000, speed: 99 },
+      { id: "b", start: 500, end: 1500, speed: 0.01 },
+    ];
+    q.style.webcam = { ...q.style.webcam, margin: 5, borderWidth: -3, brightness: 7, contrast: 9, chromaKey: { ...q.style.webcam.chromaKey, spill: 3, color: "nope" } };
+    q.style.backgroundImage = { file: "b.png", fit: "cover", blur: 1000 };
+    const w = toWireProject(q).edits!;
+    expect(w.annotations![0]).toMatchObject({ x: 1, strokeWidth: 40, fontSize: 8, opacity: 1, color: "#4ed2fb", fadeMs: 2000 });
+    expect(w.annotations![0].text.length).toBe(500);
+    expect(new TextEncoder().encode(w.annotations![0].id).length).toBe(64);
+    expect(w.speed).toEqual([
+      { startMs: 0, endMs: 1000, speed: 4 },
+      { startMs: 1000, endMs: 1500, speed: 0.25 },
+    ]);
+    expect(w.style.webcam).toMatchObject({ margin: 0.2, borderWidth: 0, brightness: 1, contrast: 2, chromaKey: { spill: 1, color: "#00ff00" } });
+    expect(w.style.backgroundImage!.blur).toBe(100);
   });
 });

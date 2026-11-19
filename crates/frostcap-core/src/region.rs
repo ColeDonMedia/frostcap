@@ -151,7 +151,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
     }
 }
 
-fn run_overlay() -> Result<Option<RECT>> {
+fn run_overlay(exclude_from_capture: bool) -> Result<Option<RECT>> {
     // SAFETY: plain Win32 window creation + message loop on this thread.
     unsafe {
         let hinst = GetModuleHandleW(None)?;
@@ -194,6 +194,9 @@ fn run_overlay() -> Result<Option<RECT>> {
             None,
         )?;
         SetLayeredWindowAttributes(hwnd, COLORREF(0), 110, LWA_ALPHA)?;
+        // The dimming overlay must never end up in a capture.
+        let _excluded =
+            crate::affinity::exclude_own_windows(&[hwnd.0 as isize], exclude_from_capture);
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = SetForegroundWindow(hwnd);
         let _ = SetFocus(Some(hwnd));
@@ -255,11 +258,17 @@ pub fn selection_from_screen_rect(abs: Rect) -> Result<RegionSelection> {
     })
 }
 
-/// Show the overlay and wait for the user. `Ok(None)` when cancelled.
+/// Show the overlay and wait for the user. `Ok(None)` when cancelled. The overlay is
+/// hidden from screen captures (see [`pick_region_with`]).
 pub fn pick_region() -> Result<Option<RegionSelection>> {
+    pick_region_with(true)
+}
+
+/// [`pick_region`] with control over `WDA_EXCLUDEFROMCAPTURE` on the overlay.
+pub fn pick_region_with(exclude_from_capture: bool) -> Result<Option<RegionSelection>> {
     let abs = std::thread::Builder::new()
         .name("frostcap-region".into())
-        .spawn(run_overlay)
+        .spawn(move || run_overlay(exclude_from_capture))
         .map_err(|e| Error::Invalid(e.to_string()))?
         .join()
         .map_err(|_| Error::Invalid("region picker panicked".into()))??;

@@ -1,3 +1,5 @@
+import { getLocale, t } from "../i18n";
+
 export function fmtTime(ms: number, withMs = false): string {
   const neg = ms < 0;
   ms = Math.max(0, Math.abs(ms));
@@ -24,13 +26,13 @@ export function fmtRelative(iso: string): string {
   if (!Number.isFinite(d)) return "";
   const diff = Date.now() - d;
   const min = Math.round(diff / 60000);
-  if (min < 1) return "just now";
-  if (min < 60) return `${min} min ago`;
+  if (min < 1) return t("time.justNow");
+  if (min < 60) return t("time.minAgo", { n: min });
   const h = Math.round(min / 60);
-  if (h < 24) return `${h} h ago`;
+  if (h < 24) return t("time.hAgo", { n: h });
   const days = Math.round(h / 24);
-  if (days < 30) return `${days} d ago`;
-  return new Date(iso).toLocaleDateString();
+  if (days < 30) return t("time.dAgo", { n: days });
+  return new Date(iso).toLocaleDateString(getLocale());
 }
 
 export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));

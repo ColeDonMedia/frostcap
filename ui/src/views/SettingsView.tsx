@@ -2,33 +2,35 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent }
 import { chordFromEvent, validateBindings, type HotkeyBindings } from "../lib/hotkeys";
 import type { WireKeyCapture } from "../contract";
 import { Monitor, Moon, Sun, Sparkles, Square, Wand2 } from "lucide-react";
-import { useApp, type ThemePref, type TransparencyPref } from "../store/app";
-import { Kbd, Segmented, Switch } from "../components/ui";
+import { useApp, type Language, type ThemePref, type TransparencyPref } from "../store/app";
+import { Kbd, Segmented, Select, Switch } from "../components/ui";
 import type { HotkeyChord } from "../types";
-import { backend, isTauri, toBackendError } from "../backend";
+import { backend, isTauri, toBackendError, type CaptureSettings } from "../backend";
 import { BrandMark } from "../components/BrandMark";
+import { LOCALES, systemLocale, t, tRich, type MessageKey } from "../i18n";
 
-const SHORTCUTS: [string, string[]][] = [
-  ["Play / pause", ["Space"]],
-  ["Split at playhead", ["S"]],
-  ["Add zoom at playhead", ["Z"]],
-  ["Delete selection", ["Del"]],
-  ["Undo", ["Ctrl", "Z"]],
-  ["Redo", ["Ctrl", "Y"]],
-  ["Step one frame", ["←", "→"]],
-  ["Step one second", ["Shift", "← / →"]],
-  ["Jump to start / end", ["Home", "End"]],
-  ["Save project", ["Ctrl", "S"]],
-  ["Export", ["Ctrl", "E"]],
-  ["Go to Record / Edit / Settings", ["Ctrl", "1 / 2 / 3"]],
+// Key names (Space, Ctrl, ...) stay in English on purpose: they are the labels printed on the keyboard shortcuts documentation.
+const SHORTCUTS: [MessageKey, string[]][] = [
+  ["sc.playPause", ["Space"]],
+  ["sc.split", ["S"]],
+  ["sc.addZoom", ["Z"]],
+  ["sc.delete", ["Del"]],
+  ["sc.undo", ["Ctrl", "Z"]],
+  ["sc.redo", ["Ctrl", "Y"]],
+  ["sc.frame", ["←", "→"]],
+  ["sc.second", ["Shift", "← / →"]],
+  ["sc.startEnd", ["Home", "End"]],
+  ["sc.save", ["Ctrl", "S"]],
+  ["sc.export", ["Ctrl", "E"]],
+  ["sc.views", ["Ctrl", "1 / 2 / 3"]],
 ];
 
 /** Absolute Windows path (drive or UNC) without characters Windows forbids. */
 export function folderError(p: string): string | null {
   const v = p.trim();
   if (!v) return null; // empty = backend default
-  if (!/^([a-z]:\\|\\\\[^\\]+\\[^\\]+)/i.test(v)) return "Enter a full path such as D:\\Videos\\Frostcap, or use Browse.";
-  if (/[<>"|?*]/.test(v.slice(2))) return 'A folder name cannot contain < > " | ? or *.';
+  if (!/^([a-z]:\\|\\\\[^\\]+\\[^\\]+)/i.test(v)) return t("settings.errFull");
+  if (/[<>"|?*]/.test(v.slice(2))) return t("settings.errChars");
   return null;
 }
 
@@ -59,10 +61,10 @@ function OutputFolderField() {
     <div className="setting">
       <label className="setting__text" htmlFor="output-folder">
         <span className="setting__label" style={{ display: "block" }}>
-          Output folder
+          {t("settings.outputFolder")}
         </span>
         <span className="setting__hint" style={{ display: "block" }}>
-          {saved ? "Recordings and exports are saved here." : fallback ? "Default: your Videos\\Frostcap folder." : "Default: the Frostcap folder in your Videos library."}
+          {saved ? t("settings.outputSaved") : fallback ? t("settings.outputDefault") : t("settings.outputDefaultGeneric")}
         </span>
       </label>
       <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: "1 1 320px" }}>
@@ -72,7 +74,7 @@ function OutputFolderField() {
             className="input"
             style={{ flex: 1, fontFamily: "var(--mono)", fontSize: 12.5 }}
             value={shown}
-            placeholder="Videos\Frostcap (default)"
+            placeholder={t("settings.outputPlaceholder")}
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? "output-folder-error" : undefined}
             onChange={(e) => {
@@ -86,21 +88,21 @@ function OutputFolderField() {
           <button
             type="button"
             className="btn"
-            title={isTauri ? "Choose a folder" : "Demo: picks a sample folder"}
+            title={isTauri ? t("settings.choose") : t("settings.chooseDemo")}
             onClick={async () => {
               try {
-                const p = await backend.pickFolder("Choose the output folder");
+                const p = await backend.pickFolder(t("settings.chooseTitle"));
                 if (p) {
                   setSetting("outputFolder", p);
                   setDraft(null);
                   setError(null);
                 }
               } catch (e) {
-                reportIssue(e, "Choose folder");
+                reportIssue(e, t("settings.errChoose"));
               }
             }}
           >
-            Browse…
+            {t("settings.browse")}
           </button>
         </div>
         {error && (
@@ -113,8 +115,9 @@ function OutputFolderField() {
   );
 }
 
-const ACTION_LABEL: Record<HotkeyChord["action"], string> = { startStop: "Start/stop recording", pauseResume: "Pause/resume recording" };
-const ACTION_SHORT: Record<HotkeyChord["action"], string> = { startStop: "start/stop", pauseResume: "pause/resume" };
+const ACTION_LABEL: Record<HotkeyChord["action"], MessageKey> = { startStop: "settings.hkStartStop", pauseResume: "settings.hkPauseResume" };
+const ACTION_CHANGE: Record<HotkeyChord["action"], MessageKey> = { startStop: "settings.hkChangeStartStop", pauseResume: "settings.hkChangePauseResume" };
+const ACTION_CHANGE_LABEL: Record<HotkeyChord["action"], MessageKey> = { startStop: "settings.hkChangeLabelStartStop", pauseResume: "settings.hkChangeLabelPauseResume" };
 
 /** View/change the global recording hotkeys (set_hotkeys; persisted by the backend). */
 function HotkeysSection() {
@@ -165,26 +168,26 @@ function HotkeysSection() {
   return (
     <section className="panel glass" aria-labelledby="s-hotkeys">
       <h2 className="panel__title" id="s-hotkeys">
-        Global recording hotkeys
+        {t("settings.hotkeys")}
       </h2>
       {chords === null ? (
-        <p className="field__hint">Loading…</p>
+        <p className="field__hint">{t("common.loading")}</p>
       ) : chords.length === 0 ? (
-        <p className="field__hint">Global hotkeys are not available.</p>
+        <p className="field__hint">{t("settings.hotkeysUnavailable")}</p>
       ) : (
         chords.map((c) => (
           <div className="setting hotkey" key={c.action}>
             <div className="setting__text">
               <span className="setting__label" style={{ display: "block" }}>
-                {ACTION_LABEL[c.action]}
+                {t(ACTION_LABEL[c.action])}
               </span>
               <span className="setting__hint" style={{ display: "block" }}>
-                {c.registered ? "Works from any app." : "Not active: in use by another app. Choose a different combination."}
+                {c.registered ? t("settings.hkActive") : t("settings.hkInactive")}
               </span>
             </div>
             {editing === c.action ? (
               <button ref={captureRef} type="button" className="btn hotkey__capture" onKeyDown={(e) => void onCapture(e)} disabled={saving} aria-describedby="hotkey-help">
-                Press the new keys… (Esc to cancel)
+                {t("settings.hkCapture")}
               </button>
             ) : (
               <>
@@ -196,9 +199,9 @@ function HotkeysSection() {
                     setError(null);
                     setEditing(c.action);
                   }}
-                  aria-label={`Change ${ACTION_SHORT[c.action]} hotkey`}
+                  aria-label={t(ACTION_CHANGE_LABEL[c.action])}
                 >
-                  Change {ACTION_SHORT[c.action]}
+                  {t(ACTION_CHANGE[c.action])}
                 </button>
               </>
             )}
@@ -206,12 +209,70 @@ function HotkeysSection() {
         ))
       )}
       <p id="hotkey-help" className="field__hint" style={{ margin: 0 }}>
-        Use Ctrl or Win plus a letter, digit or F1–F24. Starting from a hotkey always shows the countdown, and only while Frostcap is visible.
+        {t("settings.hkHelp")}
       </p>
       {error && (
         <p className="field__error" role="alert" style={{ margin: 0 }}>
           {error}
         </p>
+      )}
+    </section>
+  );
+}
+
+/** Backend-persisted capture options. A failed save reverts the switch and shows an error toast. */
+function CaptureSection() {
+  const reportIssue = useApp((s) => s.reportIssue);
+  const [cs, setCs] = useState<CaptureSettings | null>(null);
+
+  useEffect(() => {
+    backend.captureSettings().then(setCs, () => setCs(null));
+  }, []);
+
+  const change = async (key: keyof CaptureSettings, enabled: boolean) => {
+    const before = cs;
+    setCs((c) => (c ? { ...c, [key]: enabled } : c));
+    try {
+      setCs(await (key === "captureBorder" ? backend.setCaptureBorder(enabled) : backend.setExcludeOwnWindows(enabled)));
+    } catch (e) {
+      setCs(before);
+      // The user declined the native confirmation: revert quietly.
+      if (toBackendError(e).code !== "cancelled") reportIssue(e, t("settings.errCapture"));
+    }
+  };
+
+  return (
+    <section className="panel glass" aria-labelledby="s-capture">
+      <h2 className="panel__title" id="s-capture">
+        {t("settings.capture")}
+      </h2>
+      {cs === null ? (
+        <p className="field__hint">{t("settings.captureUnavailable")}</p>
+      ) : (
+        <>
+          <div className="setting">
+            <label className="setting__text" htmlFor="set-capture-border">
+              <span className="setting__label" style={{ display: "block" }}>
+                {t("settings.captureBorder")}
+              </span>
+              <span className="setting__hint" style={{ display: "block" }}>
+                {t("settings.captureBorderHint")}
+              </span>
+            </label>
+            <Switch id="set-capture-border" label={t("settings.captureBorder")} checked={cs.captureBorder} onChange={(v) => void change("captureBorder", v)} />
+          </div>
+          <div className="setting">
+            <label className="setting__text" htmlFor="set-exclude-own">
+              <span className="setting__label" style={{ display: "block" }}>
+                {t("settings.excludeOwn")}
+              </span>
+              <span className="setting__hint" style={{ display: "block" }}>
+                {t("settings.excludeOwnHint")}
+              </span>
+            </label>
+            <Switch id="set-exclude-own" label={t("settings.excludeOwn")} checked={cs.excludeOwnWindows} onChange={(v) => void change("excludeOwnWindows", v)} />
+          </div>
+        </>
       )}
     </section>
   );
@@ -227,94 +288,108 @@ export default function SettingsView() {
       <div className="page__inner">
       <div className="page__head">
         <div>
-          <h1 className="page__title">Settings</h1>
-          <p className="page__sub">Appearance, output and keyboard shortcuts.</p>
+          <h1 className="page__title">{t("settings.title")}</h1>
+          <p className="page__sub">{t("settings.subtitle")}</p>
         </div>
       </div>
       <div className="settings">
         <section className="panel glass" aria-labelledby="s-appearance">
           <h2 className="panel__title" id="s-appearance">
-            Appearance
+            {t("settings.appearance")}
           </h2>
           <div className="setting">
             <div className="setting__text">
-              <div className="setting__label">Theme</div>
-              <div className="setting__hint">System follows Windows light/dark mode.</div>
+              <div className="setting__label">{t("settings.theme")}</div>
+              <div className="setting__hint">{t("settings.themeHint")}</div>
             </div>
             <Segmented<ThemePref>
-              label="Theme"
+              label={t("settings.theme")}
               value={settings.theme}
               onChange={(v) => setSetting("theme", v)}
               options={[
-                { value: "system", label: "System", icon: <Monitor size={14} /> },
-                { value: "dark", label: "Dark", icon: <Moon size={14} /> },
-                { value: "light", label: "Light", icon: <Sun size={14} /> },
+                { value: "system", label: t("theme.system"), icon: <Monitor size={14} /> },
+                { value: "dark", label: t("theme.dark"), icon: <Moon size={14} /> },
+                { value: "light", label: t("theme.light"), icon: <Sun size={14} /> },
               ]}
             />
           </div>
           <div className="setting">
             <div className="setting__text">
-              <div className="setting__label">Transparency</div>
-              <div className="setting__hint">
-                Auto uses solid surfaces when Windows asks for reduced transparency or motion. Solid also stops the background animation.
-              </div>
+              <div className="setting__label">{t("settings.transparency")}</div>
+              <div className="setting__hint">{t("settings.transparencyHint")}</div>
             </div>
             <Segmented<TransparencyPref>
-              label="Transparency"
+              label={t("settings.transparency")}
               value={settings.transparency}
               onChange={(v) => setSetting("transparency", v)}
               options={[
-                { value: "auto", label: "Auto", icon: <Wand2 size={14} /> },
-                { value: "glass", label: "Glass", icon: <Sparkles size={14} /> },
-                { value: "solid", label: "Solid", icon: <Square size={14} /> },
+                { value: "auto", label: t("settings.trAuto"), icon: <Wand2 size={14} /> },
+                { value: "glass", label: t("settings.trGlass"), icon: <Sparkles size={14} /> },
+                { value: "solid", label: t("settings.trSolid"), icon: <Square size={14} /> },
               ]}
             />
+          </div>
+          <div className="setting">
+            <div className="setting__text">
+              <div className="setting__label">{t("settings.language")}</div>
+              <div className="setting__hint">{t("settings.languageHint")}</div>
+            </div>
+            <div style={{ minWidth: 220 }}>
+              <Select<Language>
+                label={t("settings.language")}
+                hideLabel
+                value={settings.language}
+                onChange={(v) => setSetting("language", v)}
+                options={[{ value: "system", label: t("settings.languageSystem", { name: LOCALES.find((l) => l.id === systemLocale())?.name ?? "English" }) }, ...LOCALES.map((l) => ({ value: l.id, label: l.name }))]}
+              />
+            </div>
           </div>
         </section>
 
         <section className="panel glass" aria-labelledby="s-output">
           <h2 className="panel__title" id="s-output">
-            Output
+            {t("settings.output")}
           </h2>
           <OutputFolderField />
         </section>
 
+        <CaptureSection />
+
         <section className="panel glass" aria-labelledby="s-privacy">
           <h2 className="panel__title" id="s-privacy">
-            Privacy
+            {t("settings.privacy")}
           </h2>
           <div className="setting">
             <div className="setting__text">
               <span className="setting__label" style={{ display: "block" }}>
-                Key capture
+                {t("settings.keyCapture")}
               </span>
               <span className="setting__hint" style={{ display: "block" }}>
-                Records key presses (never key releases, never typed text as a string) for the key overlay. “Shortcuts only” keeps keys pressed with Ctrl, Alt
-                or Win, plus F-keys. “All keys” would also record passwords you type while recording, as individual presses in project.json. Off by default;
-                the recorder bar shows <strong>Keys on</strong> while it is active.
+                {tRich("settings.keyCaptureHint", undefined, (s) => (
+                  <strong key="on">{s}</strong>
+                ))}
               </span>
             </div>
             <Segmented<WireKeyCapture>
-              label="Key capture"
+              label={t("settings.keyCapture")}
               value={settings.keyCapture}
               onChange={(v) => (v === "all" ? setConfirmAll(true) : setSetting("keyCapture", v))}
               options={[
-                { value: "off", label: "Off" },
-                { value: "shortcuts", label: "Shortcuts only" },
-                { value: "all", label: "All keys" },
+                { value: "off", label: t("settings.keysOff") },
+                { value: "shortcuts", label: t("settings.keysShortcuts") },
+                { value: "all", label: t("settings.keysAll") },
               ]}
             />
           </div>
           {confirmAll && (
             <div className="confirm glass" role="alertdialog" aria-labelledby="all-keys-title" aria-describedby="all-keys-desc">
-              <strong id="all-keys-title">Record every key you press?</strong>
+              <strong id="all-keys-title">{t("settings.confirmTitle")}</strong>
               <p id="all-keys-desc" className="setting__hint" style={{ margin: 0 }}>
-                “All keys” stores every key press while recording, which includes passwords, messages and anything else you type. Anyone with the
-                project file can reconstruct it. Use “Shortcuts only” unless you really need it, and scrub keys before sharing a project.
+                {t("settings.confirmBody")}
               </p>
               <div className="sheet__foot">
                 <button type="button" className="btn" autoFocus onClick={() => setConfirmAll(false)}>
-                  Cancel
+                  {t("common.cancel")}
                 </button>
                 <button
                   type="button"
@@ -324,7 +399,7 @@ export default function SettingsView() {
                     setConfirmAll(false);
                   }}
                 >
-                  Record all keys
+                  {t("settings.confirmYes")}
                 </button>
               </div>
             </div>
@@ -332,30 +407,29 @@ export default function SettingsView() {
           <div className="setting">
             <label className="setting__text" htmlFor="set-titles">
               <span className="setting__label" style={{ display: "block" }}>
-                Record window titles
+                {t("settings.titles")}
               </span>
               <span className="setting__hint" style={{ display: "block" }}>
-                Window titles can contain document names, email subjects or URLs. Off by default: the recorder only stores an anonymous window id
-                (enough for auto-zoom to notice window switches).
+                {t("settings.titlesHint")}
               </span>
             </label>
-            <Switch id="set-titles" label="Record window titles" checked={settings.captureTitles} onChange={(v) => setSetting("captureTitles", v)} />
+            <Switch id="set-titles" label={t("settings.titles")} checked={settings.captureTitles} onChange={(v) => setSetting("captureTitles", v)} />
           </div>
           <p className="field__hint" style={{ margin: 0 }}>
-            Frostcap works offline: recordings, projects and settings stay on this computer. No analytics, no network requests.
+            {t("settings.offline")}
           </p>
         </section>
 
         <section className="panel glass" aria-labelledby="s-about">
           <h2 className="panel__title" id="s-about">
-            About
+            {t("settings.about")}
           </h2>
           <div className="about">
             <BrandMark size={64} glow />
             <div>
               <p className="about__name">Frostcap</p>
-              <p className="about__meta">Version 0.1.0 · Free and open source (MIT)</p>
-              <p className="about__meta">Screen recording with cinematic zooms, smooth cursors and frosted framing.</p>
+              <p className="about__meta">{t("settings.aboutMeta")}</p>
+              <p className="about__meta">{t("settings.aboutTagline")}</p>
             </div>
           </div>
         </section>
@@ -364,12 +438,12 @@ export default function SettingsView() {
 
         <section className="panel glass" aria-labelledby="s-keys">
           <h2 className="panel__title" id="s-keys">
-            Keyboard shortcuts
+            {t("settings.shortcuts")}
           </h2>
           <dl className="shortcuts">
             {SHORTCUTS.map(([label, keys]) => (
               <div key={label} style={{ display: "contents" }}>
-                <dt>{label}</dt>
+                <dt>{t(label)}</dt>
                 <dd>
                   {keys.map((k) => (
                     <Kbd key={k}>{k}</Kbd>
@@ -379,7 +453,7 @@ export default function SettingsView() {
             ))}
           </dl>
           <p className="field__hint" style={{ margin: 0 }}>
-            "Editor shortcuts are fixed in this version."
+            {t("settings.shortcutsNote")}
           </p>
         </section>
       </div>

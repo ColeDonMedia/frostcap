@@ -24,6 +24,17 @@ const COMMANDS: &[&str] = &[
     "hotkeys",
     "set_hotkeys",
     "default_output_dir",
+    "launch_options",
+    "export_batch",
+    "encoder_capabilities",
+    "suggest_cuts",
+    "pick_image",
+    "import_background",
+    "write_selftest_report",
+    "selftest_cleanup",
+    "capture_settings",
+    "set_capture_border",
+    "set_exclude_own_windows",
 ];
 
 fn main() {

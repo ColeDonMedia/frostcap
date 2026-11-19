@@ -3,6 +3,7 @@ import { backend, isTauri, type Unlisten } from "../backend";
 import type { CaptureSource } from "../types";
 import { useApp } from "./app";
 import { openProjectGuarded } from "./guard";
+import { t } from "../i18n";
 
 type Phase = "idle" | "countdown" | "recording" | "paused" | "stopping";
 
@@ -43,7 +44,7 @@ let windowVisible = async (): Promise<boolean> => {
 export function __setWindowVisibleProbe(fn: () => Promise<boolean>) {
   windowVisible = fn;
 }
-const PRIMARY: CaptureSource = { id: "primary", kind: "display", name: "Primary display", width: 0, height: 0, wire: { kind: "primaryMonitor" } };
+const primarySource = (): CaptureSource => ({ id: "primary", kind: "display", name: t("recorder.primaryDisplay"), width: 0, height: 0, wire: { kind: "primaryMonitor" } });
 let cdTimer: ReturnType<typeof setInterval> | null = null;
 
 async function attachListeners(set: (p: Partial<RecState>) => void) {
@@ -55,18 +56,18 @@ async function attachListeners(set: (p: Partial<RecState>) => void) {
       if (ph === "recording" || ph === "paused") set({ elapsedMs, phase: paused ? "paused" : "recording" });
       else set({ elapsedMs });
     }),
-    backend.onRecordingWarning((i) => app.reportIssue(i, "Recording", "warning")),
+    backend.onRecordingWarning((i) => app.reportIssue(i, t("rec.warning"), "warning")),
     // Fatal errors arrive as recording://error followed by recording://stopped; the latter decides the outcome.
-    backend.onRecordingError((i) => app.reportIssue(i, "Recording problem", "error")),
+    backend.onRecordingError((i) => app.reportIssue(i, t("rec.problem"), "error")),
     backend.onRecordingStopped(({ result, error }) => {
       // A user stop is handled by stop(); this covers auto-stops (fatal error, source closed, hotkey).
       if (useRecording.getState().phase === "stopping") return;
       detach();
       set({ phase: "idle", elapsedMs: 0, capturingKeys: false });
-      if (error) app.reportIssue(error, "Recording stopped", "error");
+      if (error) app.reportIssue(error, t("rec.stopped"), "error");
       if (result) {
         void openProjectGuarded(result.projectPath);
-        if (!error) app.showToast("Recording saved");
+        if (!error) app.showToast(t("rec.saved"));
       }
     }),
   ]);
@@ -93,7 +94,7 @@ export const useRecording = create<RecState>((set, get) => ({
       if (handled || action !== "startStop" || get().phase !== "idle") return;
       // Security: never start silently. Only with the main window visible, and always via the countdown.
       void windowVisible().then((ok) => {
-        if (ok && get().phase === "idle") void get().start(get().source ?? PRIMARY, { forceCountdown: true });
+        if (ok && get().phase === "idle") void get().start(get().source ?? primarySource(), { forceCountdown: true });
       });
     });
   },
@@ -119,7 +120,7 @@ export const useRecording = create<RecState>((set, get) => ({
       } catch (e) {
         detach();
         set({ phase: "idle" });
-        useApp.getState().reportIssue(e, "Could not start recording");
+        useApp.getState().reportIssue(e, t("rec.startFailed"));
       }
     };
     if (!s.countdown && !opts?.forceCountdown) return begin();
@@ -147,7 +148,7 @@ export const useRecording = create<RecState>((set, get) => ({
       set({ phase: "paused" });
     } catch (e) {
       set({ pauseSupported: false });
-      useApp.getState().reportIssue(e, "Pause", "warning");
+      useApp.getState().reportIssue(e, t("rec.pauseFailed"), "warning");
     }
   },
 
@@ -156,7 +157,7 @@ export const useRecording = create<RecState>((set, get) => ({
       await backend.resumeRecording();
       set({ phase: "recording" });
     } catch (e) {
-      useApp.getState().reportIssue(e, "Resume");
+      useApp.getState().reportIssue(e, t("rec.resumeFailed"));
     }
   },
 
@@ -167,10 +168,10 @@ export const useRecording = create<RecState>((set, get) => ({
     try {
       const res = await backend.stopRecording();
       await openProjectGuarded(res.projectPath);
-      if (res.warnings.length) useApp.getState().showToast(`Recording saved with warnings: ${res.warnings.join("; ")}`, "warning");
-      else useApp.getState().showToast("Recording saved");
+      if (res.warnings.length) useApp.getState().showToast(t("rec.savedWarnings", { warnings: res.warnings.join("; ") }), "warning");
+      else useApp.getState().showToast(t("rec.saved"));
     } catch (e) {
-      useApp.getState().reportIssue(e, "Stop failed");
+      useApp.getState().reportIssue(e, t("rec.stopFailed"));
     } finally {
       detach();
       set({ phase: "idle", elapsedMs: 0, capturingKeys: false });

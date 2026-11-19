@@ -414,6 +414,11 @@ pub struct EditList {
     /// Split points (ms, video clock): clip boundaries inside kept ranges. They
     /// have no visual effect; they are stored so the editor timeline round-trips.
     pub splits: Vec<u64>,
+    /// Speed changes (source clock, never overlapping). Parts of the timeline
+    /// outside every segment play at 1x. Applies to video and audio.
+    pub speed: Vec<SpeedSegment>,
+    /// On-screen annotations (arrows, text, shapes, spotlight, blur...).
+    pub annotations: Vec<Annotation>,
     /// Opaque editor-only state that is purely cosmetic (zoom defaults...).
     /// Round-tripped verbatim; size-capped by [`Project::validate`].
     #[serde(skip_serializing_if = "serde_json::Value::is_null")]
@@ -434,6 +439,10 @@ struct EditListWire {
     #[serde(default)]
     splits: Vec<u64>,
     #[serde(default)]
+    speed: Vec<SpeedSegment>,
+    #[serde(default)]
+    annotations: Vec<Annotation>,
+    #[serde(default)]
     ui: serde_json::Value,
 }
 
@@ -453,6 +462,8 @@ impl TryFrom<serde_json::Value> for EditList {
             style: w.style,
             captions: w.captions,
             splits: w.splits,
+            speed: w.speed,
+            annotations: w.annotations,
             ui: w.ui,
         };
         if e.ui.get("v").and_then(serde_json::Value::as_u64) != Some(1) {
@@ -471,7 +482,8 @@ impl TryFrom<serde_json::Value> for EditList {
             s.cursor = legacy::<CursorStyle>(ui, "cursor").map_or(s.cursor, CursorStyle::sanitized);
         }
         if !present(style, "webcam") {
-            s.webcam = legacy::<WebcamStyle>(ui, "webcam").map_or(s.webcam, WebcamStyle::sanitized);
+            s.webcam = legacy::<WebcamStyle>(ui, "webcam")
+                .map_or_else(|| s.webcam.clone(), WebcamStyle::sanitized);
         }
         if !present(style, "audio") {
             s.audio = legacy::<AudioStyle>(ui, "audio").map_or(s.audio, AudioStyle::sanitized);
@@ -522,6 +534,12 @@ impl WebcamStyle {
     fn sanitized(self) -> Self {
         Self {
             size: clamp_or(self.size, 0.05, 0.6, Self::default().size),
+            margin: clamp_or(self.margin, 0.0, 0.2, Self::DEFAULT_MARGIN),
+            border_width: clamp_or(self.border_width, 0.0, 20.0, 0.0),
+            brightness: clamp_or(self.brightness, -1.0, 1.0, 0.0),
+            contrast: clamp_or(self.contrast, 0.0, 2.0, 1.0),
+            saturation: clamp_or(self.saturation, 0.0, 2.0, 1.0),
+            shadow: clamp_or(self.shadow, 0.0, 1.0, 0.4),
             ..self
         }
     }
@@ -605,6 +623,10 @@ pub enum WindowFrame {
     /// Traffic lights.
     #[serde(rename = "macos")]
     MacOs,
+    /// Laptop mockup: screen bezel on a keyboard base (drawn procedurally).
+    Laptop,
+    /// Phone mockup: thick rounded bezel with a camera pill (drawn procedurally).
+    Phone,
 }
 
 /// Webcam bubble shape.
@@ -670,7 +692,7 @@ impl Default for CursorStyle {
 }
 
 /// Webcam bubble.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct WebcamStyle {
     /// Draw the bubble.
@@ -681,6 +703,107 @@ pub struct WebcamStyle {
     pub size: f64,
     /// Corner of the output.
     pub position: Corner,
+    /// Distance from the output edge as a fraction of the output height
+    /// (0..=0.2). The default is the original 28 px at 1080p.
+    pub margin: f64,
+    /// Border width in px at 1080p output (0..=20, 0 = none), scaled with the
+    /// output. Drawn inside the bubble's rectangle, so `size` stays the outer diameter.
+    pub border_width: f64,
+    /// Border colour (`#RRGGBB`).
+    pub border_color: Rgba,
+    /// Flip the camera horizontally.
+    pub mirror: bool,
+    /// Brightness offset (-1..=1, 0 = unchanged).
+    pub brightness: f64,
+    /// Contrast (0..=2, 1 = unchanged).
+    pub contrast: f64,
+    /// Saturation (0..=2, 1 = unchanged, 0 = greyscale).
+    pub saturation: f64,
+    /// Drop shadow strength (0..=1; the default 0.4 is the original look).
+    pub shadow: f64,
+    /// Chroma key (green screen) removal.
+    pub chroma_key: ChromaKey,
+    /// What shows where the camera was keyed out.
+    pub background: WebcamBackground,
+}
+
+/// Chroma key settings (a colour distance mask, no segmentation).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ChromaKey {
+    /// Key on.
+    pub enabled: bool,
+    /// Colour to remove (`#RRGGBB`).
+    pub color: Rgba,
+    /// How close to `color` counts as background (0..=1).
+    pub similarity: f64,
+    /// Edge softness (0..=1).
+    pub smoothness: f64,
+    /// Spill suppression: pulls the key colour out of the kept edges (0..=1).
+    pub spill: f64,
+}
+
+impl Default for ChromaKey {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            color: Rgba([0, 255, 0, 255]),
+            similarity: 0.4,
+            smoothness: 0.1,
+            spill: 0.5,
+        }
+    }
+}
+
+/// Replacement for keyed-out camera pixels.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum WebcamBackgroundKind {
+    /// Transparent (the recording shows through).
+    #[default]
+    None,
+    /// `color`.
+    Color,
+    /// `gradient`.
+    Gradient,
+    /// `image`.
+    Image,
+    /// A blurred copy of the camera frame.
+    Blur,
+}
+
+/// Webcam background replacement (uses the chroma-key mask).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WebcamBackground {
+    /// Kind.
+    pub kind: WebcamBackgroundKind,
+    /// Fill colour for `color`.
+    pub color: Rgba,
+    /// CSS gradient for `gradient` (same format as `style.background`).
+    pub gradient: String,
+    /// Project-folder image basename for `image` (same rules as `backgroundImage`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// Blur amount for `blur` (0..=1).
+    pub blur: f64,
+}
+
+impl Default for WebcamBackground {
+    fn default() -> Self {
+        Self {
+            kind: WebcamBackgroundKind::None,
+            color: Rgba([17, 20, 28, 255]),
+            gradient: "linear-gradient(135deg,#a1c4fd,#c2e9fb)".to_owned(),
+            image: None,
+            blur: 0.5,
+        }
+    }
+}
+
+impl WebcamStyle {
+    /// Default `margin`: 28 px at 1080p, what the exporter always used.
+    pub const DEFAULT_MARGIN: f64 = 28.0 / 1080.0;
 }
 
 impl Default for WebcamStyle {
@@ -690,6 +813,61 @@ impl Default for WebcamStyle {
             shape: WebcamShape::Circle,
             size: 0.22,
             position: Corner::BottomRight,
+            margin: Self::DEFAULT_MARGIN,
+            border_width: 0.0,
+            border_color: Rgba([255, 255, 255, 255]),
+            mirror: false,
+            brightness: 0.0,
+            contrast: 1.0,
+            saturation: 1.0,
+            shadow: 0.4,
+            chroma_key: ChromaKey::default(),
+            background: WebcamBackground::default(),
+        }
+    }
+}
+
+/// An sRGB colour with alpha, written as `#rrggbb` (opaque) or `#rrggbbaa`;
+/// `#rgb` is accepted on read too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rgba(pub [u8; 4]);
+
+impl Serialize for Rgba {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        let [r, g, b, a] = self.0;
+        if a == 255 {
+            s.serialize_str(&format!("#{r:02x}{g:02x}{b:02x}"))
+        } else {
+            s.serialize_str(&format!("#{r:02x}{g:02x}{b:02x}{a:02x}"))
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Rgba {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Self::parse(&s).ok_or_else(|| serde::de::Error::custom(format!("bad colour {s:?}")))
+    }
+}
+
+impl Rgba {
+    /// Parse `#rgb`, `#rrggbb` or `#rrggbbaa`.
+    pub fn parse(s: &str) -> Option<Self> {
+        let h = s.strip_prefix('#')?;
+        if !h.is_ascii() {
+            return None;
+        }
+        let hex = |i: usize, n: usize| u8::from_str_radix(h.get(i..i + n)?, 16).ok();
+        match h.len() {
+            3 => Some(Self([
+                hex(0, 1)? * 17,
+                hex(1, 1)? * 17,
+                hex(2, 1)? * 17,
+                255,
+            ])),
+            6 => Some(Self([hex(0, 2)?, hex(2, 2)?, hex(4, 2)?, 255])),
+            8 => Some(Self([hex(0, 2)?, hex(2, 2)?, hex(4, 2)?, hex(6, 2)?])),
+            _ => None,
         }
     }
 }
@@ -831,6 +1009,10 @@ pub struct Style {
     /// Background: CSS-like colour or gradient spec, e.g. `"#0b1020"` or
     /// `"linear-gradient(135deg,#8ec5fc,#e0c3fc)"`.
     pub background: String,
+    /// Image background (stored in the project folder) drawn over `background`,
+    /// which stays visible behind a `contain` fit. Absent = gradient/colour only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_image: Option<BackgroundImage>,
     /// Padding around the recording as a fraction of the output size (0..=0.45).
     pub padding: f64,
     /// Corner radius in output pixels.
@@ -861,6 +1043,7 @@ impl Default for Style {
     fn default() -> Self {
         Self {
             background: "linear-gradient(135deg,#a1c4fd,#c2e9fb)".to_owned(),
+            background_image: None,
             padding: 0.08,
             corner_radius: 12.0,
             shadow: 0.5,
@@ -875,6 +1058,175 @@ impl Default for Style {
             captions: CaptionStyle::default(),
         }
     }
+}
+
+/// How a background image fills the output.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum BackgroundFit {
+    /// Fill the output, cropping the overflow.
+    #[default]
+    Cover,
+    /// Fit inside the output; the gradient/colour shows in the letterbox.
+    Contain,
+}
+
+/// An image background stored inside the project folder.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundImage {
+    /// Plain file name (`.png`, `.jpg`, `.jpeg`) inside the project folder; see
+    /// [`import_background`].
+    pub file: String,
+    /// Fit mode.
+    #[serde(default)]
+    pub fit: BackgroundFit,
+    /// Gaussian blur, sigma in px at 1080p (0..=100, 0 = sharp).
+    #[serde(default)]
+    pub blur: f64,
+}
+
+/// Annotation shape.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum AnnotationKind {
+    /// Arrow from (x, y) to (x2, y2).
+    #[default]
+    Arrow,
+    /// Text in the (x, y, w, h) box.
+    Text,
+    /// Rectangle outline / fill.
+    Rect,
+    /// Ellipse outline / fill.
+    Ellipse,
+    /// Translucent marker rectangle.
+    Highlight,
+    /// Darkens the screen outside the rectangle.
+    Spotlight,
+    /// Blurs the rectangle.
+    Blur,
+    /// Pixelates the rectangle.
+    Pixelate,
+}
+
+/// An annotation drawn over the screen content. Geometry is normalized
+/// (0..1) in screen-content coordinates, so it moves with zoom and pan.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Annotation {
+    /// Editor id (<= 64 bytes).
+    pub id: String,
+    /// Shape.
+    pub kind: AnnotationKind,
+    /// Start (ms, video clock).
+    pub start_ms: u64,
+    /// End (ms, video clock, >= start, <= 24 h).
+    pub end_ms: u64,
+    /// Left / arrow start x, 0..=1.
+    pub x: f64,
+    /// Top / arrow start y, 0..=1.
+    pub y: f64,
+    /// Width, 0..=1.
+    pub w: f64,
+    /// Height, 0..=1.
+    pub h: f64,
+    /// Arrow end x, 0..=1.
+    pub x2: f64,
+    /// Arrow end y, 0..=1.
+    pub y2: f64,
+    /// Colour (`#RRGGBB`).
+    pub color: Rgba,
+    /// Stroke width, px at 1080p output (1..=40).
+    pub stroke_width: f64,
+    /// Fill the shape.
+    pub fill: bool,
+    /// Text (<= 500 chars; kind `text` only).
+    pub text: String,
+    /// Font size, px at 1080p (8..=200).
+    pub font_size: f64,
+    /// Opacity 0..=1.
+    pub opacity: f64,
+    /// Blur radius / pixel block size for blur and pixelate (0..=1).
+    pub strength: f64,
+    /// Spotlight darkening outside the rectangle (0..=1).
+    pub dim: f64,
+    /// Corner radius, px at 1080p (0..=200).
+    pub corner_radius: f64,
+    /// Fade in/out length (ms, 0..=2000).
+    pub fade_ms: u64,
+}
+
+impl Default for Annotation {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            kind: AnnotationKind::Arrow,
+            start_ms: 0,
+            end_ms: 0,
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+            x2: 0.0,
+            y2: 0.0,
+            color: Rgba([0x4e, 0xd2, 0xfb, 255]),
+            stroke_width: 4.0,
+            fill: false,
+            text: String::new(),
+            font_size: 40.0,
+            opacity: 1.0,
+            strength: 0.5,
+            dim: 0.6,
+            corner_radius: 0.0,
+            fade_ms: 150,
+        }
+    }
+}
+
+impl Annotation {
+    fn validate(&self) -> Result<()> {
+        if self.id.len() > 64 {
+            return Err(invalid("annotation id is too long"));
+        }
+        if self.end_ms < self.start_ms || self.end_ms > limits::MAX_DURATION_MS {
+            return Err(invalid("annotation time range is invalid"));
+        }
+        for (f, v) in [
+            ("x", self.x),
+            ("y", self.y),
+            ("w", self.w),
+            ("h", self.h),
+            ("x2", self.x2),
+            ("y2", self.y2),
+            ("opacity", self.opacity),
+            ("strength", self.strength),
+            ("dim", self.dim),
+        ] {
+            check_range(&format!("annotation.{f}"), v, 0.0, 1.0)?;
+        }
+        check_range("annotation.strokeWidth", self.stroke_width, 1.0, 40.0)?;
+        check_range("annotation.fontSize", self.font_size, 8.0, 200.0)?;
+        check_range("annotation.cornerRadius", self.corner_radius, 0.0, 200.0)?;
+        if self.fade_ms > 2000 {
+            return Err(invalid("annotation fadeMs is outside 0..=2000"));
+        }
+        if self.text.chars().count() > limits::MAX_ANNOTATION_TEXT {
+            return Err(invalid("annotation text is too long"));
+        }
+        Ok(())
+    }
+}
+
+/// A change of playback speed over `[startMs, endMs)` of the source clock.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeedSegment {
+    /// Start (ms, video clock).
+    pub start_ms: u64,
+    /// End (ms, video clock).
+    pub end_ms: u64,
+    /// Playback speed, 0.25..=4 (1 = normal). A ramp is several adjacent segments.
+    pub speed: f64,
 }
 
 /// Resolve a user supplied path (project folder or its `project.json`) to the
@@ -905,6 +1257,16 @@ pub mod limits {
     pub const MAX_CANVAS: u32 = 16_384;
     /// Max serialized size of the opaque `edits.ui` state.
     pub const MAX_UI_STATE_BYTES: usize = 4 * 1024 * 1024;
+    /// Max size of an imported background image (20 MiB).
+    pub const MAX_BACKGROUND_BYTES: u64 = 20 * 1024 * 1024;
+    /// Max side of a background image.
+    pub const MAX_BACKGROUND_SIDE: u32 = 16_384;
+    /// Max pixels of a background image (bounds the decoded RGBA buffer to 128 MB).
+    pub const MAX_BACKGROUND_PIXELS: u64 = 32_000_000;
+    /// Max annotations per project.
+    pub const MAX_ANNOTATIONS: usize = 500;
+    /// Max annotation text length (characters).
+    pub const MAX_ANNOTATION_TEXT: usize = 500;
     /// Max recording duration (24 h): bounds frame lists and audio buffers.
     pub const MAX_DURATION_MS: u64 = 24 * 3600 * 1000;
 }
@@ -953,6 +1315,10 @@ fn is_reserved_device(stem: &str) -> bool {
 }
 
 fn check_basename(field: &str, s: &str, ext: &str) -> Result<()> {
+    check_basename_ext(field, s, &[ext])
+}
+
+fn check_basename_ext(field: &str, s: &str, exts: &[&str]) -> Result<()> {
     check_str(field, s)?;
     let stem = s.split('.').next().unwrap_or("");
     let bad = s.is_empty()
@@ -964,7 +1330,7 @@ fn check_basename(field: &str, s: &str, ext: &str) -> Result<()> {
         || is_reserved_device(stem.trim_end())
         || !Path::new(s)
             .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case(ext));
+            .is_some_and(|e| exts.iter().any(|x| e.eq_ignore_ascii_case(x)));
     if bad {
         return Err(invalid(format!(
             "{field} must be a plain file name, got {s:?}"
@@ -985,6 +1351,12 @@ fn check_f64(field: &str, v: f64, min: f64, max: f64) -> Result<()> {
         return Err(invalid(format!("{field} = {v} is outside {min}..={max}")));
     }
     Ok(())
+}
+
+/// Range check for the editor-v2 fields (kept apart from `check_f64` so the UI's
+/// drift test, which parses that helper's calls, stays valid until it learns them).
+fn check_range(field: &str, v: f64, min: f64, max: f64) -> Result<()> {
+    check_f64(field, v, min, max)
 }
 
 impl Project {
@@ -1093,6 +1465,64 @@ impl Project {
         check_f64("style.cursor.smoothing", s.cursor.smoothing, 0.0, 1.0)?;
         check_f64("style.cursor.motionBlur", s.cursor.motion_blur, 0.0, 1.0)?;
         check_f64("style.webcam.size", s.webcam.size, 0.05, 0.6)?;
+        check_range("style.webcam.margin", s.webcam.margin, 0.0, 0.2)?;
+        let w = &s.webcam;
+        check_range("style.webcam.borderWidth", w.border_width, 0.0, 20.0)?;
+        check_range("style.webcam.brightness", w.brightness, -1.0, 1.0)?;
+        check_range("style.webcam.contrast", w.contrast, 0.0, 2.0)?;
+        check_range("style.webcam.saturation", w.saturation, 0.0, 2.0)?;
+        check_range("style.webcam.shadow", w.shadow, 0.0, 1.0)?;
+        check_range(
+            "style.webcam.chromaKey.similarity",
+            w.chroma_key.similarity,
+            0.0,
+            1.0,
+        )?;
+        check_range(
+            "style.webcam.chromaKey.smoothness",
+            w.chroma_key.smoothness,
+            0.0,
+            1.0,
+        )?;
+        check_range("style.webcam.chromaKey.spill", w.chroma_key.spill, 0.0, 1.0)?;
+        check_range("style.webcam.background.blur", w.background.blur, 0.0, 1.0)?;
+        check_str("style.webcam.background.gradient", &w.background.gradient)?;
+        if let Some(img) = &w.background.image {
+            check_basename_ext(
+                "style.webcam.background.image",
+                img,
+                &["png", "jpg", "jpeg"],
+            )?;
+        }
+        check_len(
+            "edits.annotations",
+            e.annotations.len(),
+            limits::MAX_ANNOTATIONS,
+        )?;
+        for a in &e.annotations {
+            a.validate()?;
+        }
+        if let Some(b) = &s.background_image {
+            check_basename_ext(
+                "style.backgroundImage.file",
+                &b.file,
+                &["png", "jpg", "jpeg"],
+            )?;
+            check_range("style.backgroundImage.blur", b.blur, 0.0, 100.0)?;
+        }
+        check_len("edits.speed", e.speed.len(), limits::MAX_EDITS)?;
+        let mut spans: Vec<(u64, u64)> = Vec::with_capacity(e.speed.len());
+        for sp in &e.speed {
+            if sp.end_ms < sp.start_ms {
+                return Err(invalid("speed segment ends before it starts"));
+            }
+            check_range("speed.speed", sp.speed, 0.25, 4.0)?;
+            spans.push((sp.start_ms, sp.end_ms));
+        }
+        spans.sort_unstable();
+        if spans.windows(2).any(|w| w[1].0 < w[0].1) {
+            return Err(invalid("speed segments overlap"));
+        }
         let a = &s.audio;
         check_f64(
             "style.audio.noiseGateThreshold",
@@ -1172,6 +1602,180 @@ impl Project {
         write_atomic(&dir.join(META_FILE), &serde_json::to_vec(&self.meta())?)?;
         Ok(())
     }
+}
+
+/// Image formats accepted as backgrounds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageKind {
+    /// PNG.
+    Png,
+    /// JPEG.
+    Jpeg,
+}
+
+impl ImageKind {
+    /// File extension used when importing.
+    pub fn ext(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg => "jpg",
+        }
+    }
+}
+
+/// Identify a PNG/JPEG by its magic bytes and read its pixel size from the
+/// header (no decoding). Rejects zero and oversized dimensions.
+pub fn image_info(b: &[u8]) -> Result<(ImageKind, u32, u32)> {
+    let (kind, w, h) = if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        if b.len() < 24 || &b[12..16] != b"IHDR" {
+            return Err(invalid("truncated PNG header"));
+        }
+        let be = |i: usize| u32::from_be_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        (ImageKind::Png, be(16), be(20))
+    } else if b.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        let (w, h) = jpeg_size(b).ok_or_else(|| invalid("JPEG has no frame header"))?;
+        (ImageKind::Jpeg, w, h)
+    } else {
+        return Err(invalid("not a PNG or JPEG image"));
+    };
+    if w == 0
+        || h == 0
+        || w > limits::MAX_BACKGROUND_SIDE
+        || h > limits::MAX_BACKGROUND_SIDE
+        || u64::from(w) * u64::from(h) > limits::MAX_BACKGROUND_PIXELS
+    {
+        return Err(invalid(format!("image size {w}x{h} is out of range")));
+    }
+    Ok((kind, w, h))
+}
+
+/// Walk JPEG markers to the first start-of-frame and return (width, height).
+fn jpeg_size(b: &[u8]) -> Option<(u32, u32)> {
+    let mut i = 2;
+    while i + 4 <= b.len() {
+        if b[i] != 0xFF {
+            return None;
+        }
+        let m = b[i + 1];
+        if m == 0xFF {
+            i += 1; // fill byte
+            continue;
+        }
+        if m == 0xD8 || m == 0x01 || (0xD0..=0xD7).contains(&m) {
+            i += 2; // standalone markers
+            continue;
+        }
+        let len = usize::from(u16::from_be_bytes([b[i + 2], b[i + 3]]));
+        if len < 2 {
+            return None;
+        }
+        if matches!(m, 0xC0..=0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF) {
+            let s = b.get(i + 5..i + 9)?;
+            return Some((
+                u32::from(u16::from_be_bytes([s[2], s[3]])),
+                u32::from(u16::from_be_bytes([s[0], s[1]])),
+            ));
+        }
+        i += 2 + len;
+    }
+    None
+}
+
+/// Copy an image into the project folder as a background and return its file
+/// name (`background-<hash>.png|jpg`, to store in `style.backgroundImage.file`).
+///
+/// The source must be a regular `.png`/`.jpg`/`.jpeg` file of at most
+/// [`limits::MAX_BACKGROUND_BYTES`] whose *content* is a PNG/JPEG with a sane
+/// size (the stored extension follows the content). The name is derived from the
+/// bytes, so importing the same image twice is a no-op and a project that still
+/// references an older background keeps working.
+pub fn import_background(project_dir: &Path, source: &Path) -> Result<String> {
+    let ext = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .ok_or_else(|| invalid("background must be a .png or .jpg file"))?;
+    let file = fs::File::open(source).map_err(|e| Error::io(source, e))?;
+    import_background_file(project_dir, file, ext)
+}
+
+/// [`import_background] on an already-open handle: the caller opens the source
+/// once, checks what it needs on the handle, and no later path lookup can swap
+/// the file (no check-then-open race). `ext` is the source's extension without
+/// the dot (`"png"`, `"jpg"`, `"jpeg"`, any case).
+pub fn import_background_file(project_dir: &Path, mut file: fs::File, ext: &str) -> Result<String> {
+    use std::io::Read as _;
+    let source = Path::new("background");
+    if !["png", "jpg", "jpeg"]
+        .iter()
+        .any(|x| ext.eq_ignore_ascii_case(x))
+    {
+        return Err(invalid("background must be a .png or .jpg file"));
+    }
+    let meta = file.metadata().map_err(|e| Error::io(source, e))?;
+    if !meta.is_file() {
+        return Err(invalid("background must be a regular file"));
+    }
+    if meta.len() > limits::MAX_BACKGROUND_BYTES {
+        return Err(invalid(format!(
+            "background is {} bytes (max {})",
+            meta.len(),
+            limits::MAX_BACKGROUND_BYTES
+        )));
+    }
+    if !project_dir.is_dir() {
+        return Err(invalid("project folder does not exist"));
+    }
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    (&mut file)
+        .take(limits::MAX_BACKGROUND_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| Error::io(source, e))?;
+    if bytes.len() as u64 > limits::MAX_BACKGROUND_BYTES {
+        return Err(invalid("background is too large"));
+    }
+    let (kind, _, _) = image_info(&bytes)?;
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    // The name is a 64-bit hash, so never trust it: a file that already has the
+    // name but other bytes is left alone and a suffixed name is used instead.
+    for n in 0..100u32 {
+        let name = if n == 0 {
+            format!("background-{hash:016x}.{}", kind.ext())
+        } else {
+            format!("background-{hash:016x}-{n}.{}", kind.ext())
+        };
+        let path = project_dir.join(&name);
+        match fs::read(&path) {
+            Ok(existing) if existing == bytes => return Ok(name),
+            Ok(_) => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                write_atomic(&path, &bytes)?;
+                return Ok(name);
+            }
+            Err(e) => return Err(Error::io(&path, e)),
+        }
+    }
+    Err(invalid("too many background images with the same name"))
+}
+
+/// Absolute path of a background image inside `project_dir`: the name must be a
+/// plain `.png`/`.jpg` basename and the file a regular file within the size cap.
+pub fn background_path(project_dir: &Path, b: &BackgroundImage) -> Result<PathBuf> {
+    check_basename_ext(
+        "style.backgroundImage.file",
+        &b.file,
+        &["png", "jpg", "jpeg"],
+    )?;
+    let path = project_dir.join(&b.file);
+    let meta = fs::metadata(&path).map_err(|e| Error::io(&path, e))?;
+    if !meta.is_file() || meta.len() > limits::MAX_BACKGROUND_BYTES {
+        return Err(invalid(format!(
+            "background {} is not a regular file within the size cap",
+            b.file
+        )));
+    }
+    Ok(path)
 }
 
 /// Write `bytes` to `file` via a sibling temp file + rename (+ fsync).
@@ -1733,5 +2337,640 @@ mod tests {
         let back2 = Project::load(&dir.join(PROJECT_FILE)).unwrap();
         assert_eq!(back2, p);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------ editor v2 fields
+
+    fn with_speed(segs: &[(u64, u64, f64)]) -> Project {
+        let mut p = sample();
+        p.edits.speed = segs
+            .iter()
+            .map(|&(start_ms, end_ms, speed)| SpeedSegment {
+                start_ms,
+                end_ms,
+                speed,
+            })
+            .collect();
+        p
+    }
+
+    #[test]
+    fn speed_segments_roundtrip_with_wire_names_and_default_to_empty() {
+        let p = with_speed(&[(1000, 2000, 2.0)]);
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["edits"]["speed"][0]["startMs"], 1000);
+        assert_eq!(v["edits"]["speed"][0]["endMs"], 2000);
+        assert_eq!(v["edits"]["speed"][0]["speed"], 2.0);
+        let back: Project = serde_json::from_value(v.clone()).unwrap();
+        assert_eq!(back, p);
+        let mut old = v;
+        old["edits"].as_object_mut().unwrap().remove("speed");
+        let old: Project = serde_json::from_value(old).unwrap();
+        assert!(old.edits.speed.is_empty());
+        old.validate().unwrap();
+    }
+
+    #[test]
+    fn speed_range_order_and_overlap_are_validated() {
+        let ok = |segs: &[(u64, u64, f64)]| with_speed(segs).validate().is_ok();
+        assert!(ok(&[(0, 100, 0.25)]));
+        assert!(ok(&[(0, 100, 4.0)]));
+        assert!(!ok(&[(0, 100, 0.2499)]));
+        assert!(!ok(&[(0, 100, 4.0001)]));
+        assert!(!ok(&[(0, 100, f64::NAN)]));
+        assert!(!ok(&[(0, 100, f64::INFINITY)]));
+        assert!(!ok(&[(0, 100, 0.0)]));
+        assert!(!ok(&[(0, 100, -1.0)]));
+        assert!(!ok(&[(50, 10, 2.0)]), "inverted range");
+        assert!(ok(&[(0, 100, 2.0), (100, 200, 0.5)]), "touching is fine");
+        assert!(!ok(&[(0, 100, 2.0), (99, 200, 0.5)]), "overlap");
+        assert!(!ok(&[(100, 200, 2.0), (0, 150, 0.5)]), "unsorted overlap");
+        let mut many = sample();
+        many.edits.speed = vec![
+            SpeedSegment {
+                start_ms: 0,
+                end_ms: 0,
+                speed: 1.0,
+            };
+            limits::MAX_EDITS + 1
+        ];
+        assert!(many.validate().is_err());
+    }
+
+    #[test]
+    fn device_frames_have_wire_names() {
+        for (f, name) in [
+            (WindowFrame::Laptop, "laptop"),
+            (WindowFrame::Phone, "phone"),
+        ] {
+            let mut p = sample();
+            p.edits.style.frame = f;
+            let v = serde_json::to_value(&p).unwrap();
+            assert_eq!(v["edits"]["style"]["frame"], name);
+            let back: Project = serde_json::from_value(v).unwrap();
+            assert_eq!(back.edits.style.frame, f);
+        }
+    }
+
+    #[test]
+    fn webcam_margin_and_border_defaults_ranges_and_wire() {
+        let d = WebcamStyle::default();
+        assert_eq!(
+            d.margin,
+            28.0 / 1080.0,
+            "default keeps the old 28 px at 1080p"
+        );
+        assert_eq!(d.border_width, 0.0);
+        assert_eq!(d.border_color, Rgba([255, 255, 255, 255]));
+        let v = serde_json::to_value(sample()).unwrap();
+        let w = &v["edits"]["style"]["webcam"];
+        assert_eq!(w["borderWidth"], 0.0);
+        assert_eq!(w["borderColor"], "#ffffff");
+        assert!(w["margin"].as_f64().unwrap() > 0.025);
+        let ok = |f: &dyn Fn(&mut WebcamStyle)| {
+            let mut p = sample();
+            f(&mut p.edits.style.webcam);
+            p.validate().is_ok()
+        };
+        assert!(ok(&|w| w.margin = 0.0));
+        assert!(ok(&|w| w.margin = 0.2));
+        assert!(!ok(&|w| w.margin = 0.2001));
+        assert!(!ok(&|w| w.margin = -0.001));
+        assert!(!ok(&|w| w.margin = f64::NAN));
+        assert!(ok(&|w| w.border_width = 20.0));
+        assert!(!ok(&|w| w.border_width = 20.01));
+        assert!(!ok(&|w| w.border_width = -0.1));
+    }
+
+    #[test]
+    fn hex_colors_parse_and_reject_garbage() {
+        let parse = |s: &str| serde_json::from_value::<Rgba>(serde_json::json!(s));
+        assert_eq!(parse("#4ED2FB").unwrap(), Rgba([0x4e, 0xd2, 0xfb, 255]));
+        assert_eq!(parse("#fff").unwrap(), Rgba([255, 255, 255, 255]));
+        assert_eq!(parse("#11223380").unwrap(), Rgba([0x11, 0x22, 0x33, 0x80]));
+        for bad in [
+            "",
+            "red",
+            "#12",
+            "#12345",
+            "#gggggg",
+            "123456",
+            "#1234567890",
+        ] {
+            assert!(parse(bad).is_err(), "{bad:?} accepted");
+        }
+        assert_eq!(
+            serde_json::to_value(Rgba([1, 2, 3, 255])).unwrap(),
+            "#010203"
+        );
+        assert_eq!(
+            serde_json::to_value(Rgba([1, 2, 3, 4])).unwrap(),
+            "#01020304"
+        );
+    }
+
+    #[test]
+    fn background_image_roundtrips_and_is_validated() {
+        let mut p = sample();
+        assert!(
+            serde_json::to_value(&p).unwrap()["edits"]["style"]
+                .get("backgroundImage")
+                .is_none(),
+            "absent when unset"
+        );
+        p.edits.style.background_image = Some(BackgroundImage {
+            file: "background-0123456789abcdef.png".into(),
+            fit: BackgroundFit::Contain,
+            blur: 12.5,
+        });
+        let v = serde_json::to_value(&p).unwrap();
+        let bi = &v["edits"]["style"]["backgroundImage"];
+        assert_eq!(bi["file"], "background-0123456789abcdef.png");
+        assert_eq!(bi["fit"], "contain");
+        assert_eq!(bi["blur"], 12.5);
+        let back: Project = serde_json::from_value(v).unwrap();
+        assert_eq!(back, p);
+        back.validate().unwrap();
+        let bad = |f: &dyn Fn(&mut BackgroundImage)| {
+            let mut p = p.clone();
+            f(p.edits.style.background_image.as_mut().unwrap());
+            p.validate().is_err()
+        };
+        assert!(bad(&|b| b.file = "..\\evil.png".into()));
+        assert!(bad(&|b| b.file = "sub/evil.png".into()));
+        assert!(bad(&|b| b.file = "C:\\x.png".into()));
+        assert!(bad(&|b| b.file = "bg.gif".into()));
+        assert!(bad(&|b| b.file = "bg.mp4".into()));
+        assert!(bad(&|b| b.file = "NUL.png".into()));
+        assert!(bad(&|b| b.blur = 100.5));
+        assert!(bad(&|b| b.blur = -1.0));
+        assert!(bad(&|b| b.blur = f64::NAN));
+        let mut ok = p.clone();
+        ok.edits.style.background_image.as_mut().unwrap().file = "photo.JPG".into();
+        ok.edits.style.background_image.as_mut().unwrap().blur = 100.0;
+        ok.validate().unwrap();
+    }
+
+    fn png_header(w: u32, h: u32) -> Vec<u8> {
+        let mut v = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        v.extend(w.to_be_bytes());
+        v.extend(h.to_be_bytes());
+        v.extend([8, 6, 0, 0, 0, 0, 0, 0, 0]);
+        v
+    }
+
+    fn jpeg_header(w: u16, h: u16) -> Vec<u8> {
+        // SOI, APP0 (JFIF, 16 bytes), SOF0 (17 bytes).
+        let mut v = vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 16];
+        v.extend(b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0");
+        v.extend([0xFF, 0xC0, 0, 17, 8]);
+        v.extend(h.to_be_bytes());
+        v.extend(w.to_be_bytes());
+        v.extend([3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
+        v
+    }
+
+    fn import_fixture(name: &str) -> (PathBuf, PathBuf) {
+        let base = tmp_dir().join(format!("import-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let proj = base.join("p.frostcap");
+        fs::create_dir_all(&proj).unwrap();
+        (base, proj)
+    }
+
+    #[test]
+    fn import_background_copies_validated_images_by_content_hash() {
+        let (base, proj) = import_fixture("ok");
+        let src = base.join("My Photo (1).PNG");
+        fs::write(&src, png_header(1920, 1080)).unwrap();
+        let name = import_background(&proj, &src).unwrap();
+        assert!(
+            name.starts_with("background-") && name.ends_with(".png"),
+            "{name}"
+        );
+        assert_eq!(fs::read(proj.join(&name)).unwrap(), png_header(1920, 1080));
+        // The imported name is a valid project reference and importing twice is stable.
+        let mut p = sample();
+        p.edits.style.background_image = Some(BackgroundImage {
+            file: name.clone(),
+            fit: BackgroundFit::Cover,
+            blur: 0.0,
+        });
+        p.validate().unwrap();
+        assert_eq!(import_background(&proj, &src).unwrap(), name);
+        // A JPEG with a .jpeg extension is stored as .jpg.
+        let jsrc = base.join("photo.jpeg");
+        fs::write(&jsrc, jpeg_header(800, 600)).unwrap();
+        let jn = import_background(&proj, &jsrc).unwrap();
+        assert!(jn.ends_with(".jpg"), "{jn}");
+        assert_ne!(jn, name);
+        // The content decides the type, not the extension.
+        let liar = base.join("liar.png");
+        fs::write(&liar, jpeg_header(10, 10)).unwrap();
+        assert!(import_background(&proj, &liar).unwrap().ends_with(".jpg"));
+        assert_eq!(
+            image_info(&png_header(7, 9)).unwrap(),
+            (ImageKind::Png, 7, 9)
+        );
+        assert_eq!(
+            image_info(&jpeg_header(7, 9)).unwrap(),
+            (ImageKind::Jpeg, 7, 9)
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn import_background_rejects_hostile_files() {
+        let (base, proj) = import_fixture("bad");
+        let put = |n: &str, b: &[u8]| {
+            let f = base.join(n);
+            fs::write(&f, b).unwrap();
+            f
+        };
+        let entries = |d: &Path| fs::read_dir(d).unwrap().count();
+        let before = entries(&proj);
+        // Wrong extension, not an image, empty, truncated header.
+        assert!(import_background(&proj, &put("a.gif", &png_header(10, 10))).is_err());
+        assert!(import_background(&proj, &put("a.txt", &png_header(10, 10))).is_err());
+        assert!(import_background(&proj, &put("noext", &png_header(10, 10))).is_err());
+        assert!(import_background(&proj, &put("b.png", b"GIF89a....")).is_err());
+        assert!(import_background(&proj, &put("c.png", b"")).is_err());
+        assert!(import_background(&proj, &put("d.png", &png_header(10, 10)[..20])).is_err());
+        assert!(import_background(&proj, &put("e.jpg", &[0xFF, 0xD8, 0xFF, 0xD9])).is_err());
+        // Absurd or zero dimensions.
+        assert!(import_background(&proj, &put("f.png", &png_header(0, 10))).is_err());
+        assert!(import_background(&proj, &put("g.png", &png_header(20_000, 10))).is_err());
+        assert!(import_background(&proj, &put("h.png", &png_header(16_384, 16_384))).is_err());
+        assert!(import_background(&proj, &put("i.jpg", &jpeg_header(0, 5))).is_err());
+        // Over the size cap (header is valid, the file is just too large).
+        let big = base.join("big.png");
+        let mut f = fs::File::create(&big).unwrap();
+        f.write_all(&png_header(100, 100)).unwrap();
+        f.set_len(limits::MAX_BACKGROUND_BYTES + 1).unwrap();
+        drop(f);
+        assert!(import_background(&proj, &big).is_err());
+        // Exactly at the cap is accepted.
+        let edge = base.join("edge.png");
+        let mut f = fs::File::create(&edge).unwrap();
+        f.write_all(&png_header(100, 100)).unwrap();
+        f.set_len(limits::MAX_BACKGROUND_BYTES).unwrap();
+        drop(f);
+        assert!(import_background(&proj, &edge).is_ok());
+        // A folder, a missing source, a missing project folder.
+        assert!(import_background(&proj, &base).is_err());
+        assert!(import_background(&proj, &base.join("nope.png")).is_err());
+        let ok = put("ok.png", &png_header(10, 10));
+        assert!(import_background(&base.join("missing.frostcap"), &ok).is_err());
+        // Only the accepted edge file was written, and no temp files remain.
+        assert_eq!(entries(&proj), before + 1);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn import_background_never_overwrites_a_different_file_with_the_same_name() {
+        let (base, proj) = import_fixture("collide");
+        let src = base.join("a.png");
+        fs::write(&src, png_header(32, 32)).unwrap();
+        let first = import_background(&proj, &src).unwrap();
+        // Someone (or a hash collision) put other bytes under that exact name.
+        fs::write(proj.join(&first), b"different content").unwrap();
+        let second = import_background(&proj, &src).unwrap();
+        assert_ne!(second, first, "a differing file keeps its name");
+        assert!(
+            second.starts_with("background-") && second.ends_with(".png"),
+            "{second}"
+        );
+        assert_eq!(fs::read(proj.join(&first)).unwrap(), b"different content");
+        assert_eq!(fs::read(proj.join(&second)).unwrap(), png_header(32, 32));
+        // Importing again finds the identical suffixed copy instead of adding a third.
+        assert_eq!(import_background(&proj, &src).unwrap(), second);
+        // The suffixed name is a valid project reference.
+        let mut p = sample();
+        p.edits.style.background_image = Some(BackgroundImage {
+            file: second,
+            fit: BackgroundFit::Cover,
+            blur: 0.0,
+        });
+        p.validate().unwrap();
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn import_background_file_takes_an_open_handle_and_the_wrapper_agrees() {
+        let (base, proj) = import_fixture("handle");
+        let src = base.join("h.PNG");
+        fs::write(&src, png_header(16, 16)).unwrap();
+        let via_path = import_background(&proj, &src).unwrap();
+        let via_handle =
+            import_background_file(&proj, fs::File::open(&src).unwrap(), "PNG").unwrap();
+        assert_eq!(via_path, via_handle);
+        // Extension and content are validated on the handle too.
+        let gif = base.join("g.gif");
+        fs::write(&gif, png_header(4, 4)).unwrap();
+        assert!(import_background_file(&proj, fs::File::open(&gif).unwrap(), "gif").is_err());
+        let junk = base.join("j.png");
+        fs::write(&junk, b"not an image").unwrap();
+        assert!(import_background_file(&proj, fs::File::open(&junk).unwrap(), "png").is_err());
+        let big = base.join("big.png");
+        let mut f = fs::File::create(&big).unwrap();
+        f.write_all(&png_header(10, 10)).unwrap();
+        f.set_len(limits::MAX_BACKGROUND_BYTES + 1).unwrap();
+        drop(f);
+        assert!(import_background_file(&proj, fs::File::open(&big).unwrap(), "png").is_err());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn background_path_resolves_only_plain_files_inside_the_project() {
+        let (base, proj) = import_fixture("path");
+        let src = base.join("x.png");
+        fs::write(&src, png_header(4, 4)).unwrap();
+        let name = import_background(&proj, &src).unwrap();
+        let bi = |file: &str| BackgroundImage {
+            file: file.into(),
+            fit: BackgroundFit::Cover,
+            blur: 0.0,
+        };
+        assert_eq!(
+            background_path(&proj, &bi(&name)).unwrap(),
+            proj.join(&name)
+        );
+        assert!(background_path(&proj, &bi("..\\x.png")).is_err());
+        assert!(background_path(&proj, &bi("missing.png")).is_err());
+        fs::create_dir(proj.join("dir.png")).unwrap();
+        assert!(background_path(&proj, &bi("dir.png")).is_err());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    // ------------------------------------------------- annotations + webcam effects
+
+    fn ann(kind: AnnotationKind) -> Annotation {
+        Annotation {
+            id: "a1".into(),
+            kind,
+            ..Annotation::default()
+        }
+    }
+
+    #[test]
+    fn annotations_roundtrip_with_wire_names_and_defaults() {
+        let mut p = sample();
+        p.edits.annotations = vec![Annotation {
+            id: "x".into(),
+            kind: AnnotationKind::Arrow,
+            start_ms: 100,
+            end_ms: 900,
+            x: 0.1,
+            y: 0.2,
+            x2: 0.5,
+            y2: 0.6,
+            color: Rgba([255, 0, 0, 255]),
+            stroke_width: 6.0,
+            ..Annotation::default()
+        }];
+        let v = serde_json::to_value(&p).unwrap();
+        let a = &v["edits"]["annotations"][0];
+        assert_eq!(a["kind"], "arrow");
+        assert_eq!(a["startMs"], 100);
+        assert_eq!(a["color"], "#ff0000");
+        assert_eq!(a["strokeWidth"], 6.0);
+        for k in [
+            "fill",
+            "text",
+            "fontSize",
+            "opacity",
+            "strength",
+            "dim",
+            "cornerRadius",
+            "fadeMs",
+            "x2",
+            "y2",
+            "w",
+            "h",
+        ] {
+            assert!(a.get(k).is_some(), "{k} is always written");
+        }
+        let back: Project = serde_json::from_value(v.clone()).unwrap();
+        assert_eq!(back, p);
+        back.validate().unwrap();
+        // A minimal UI object (only id/kind/times/geometry) fills the rest with defaults.
+        let mut v2 = v;
+        v2["edits"]["annotations"] = serde_json::json!([{"id":"m","kind":"spotlight","startMs":0,"endMs":10,"x":0.2,"y":0.2,"w":0.3,"h":0.3}]);
+        let m: Project = serde_json::from_value(v2).unwrap();
+        assert_eq!(m.edits.annotations[0].kind, AnnotationKind::Spotlight);
+        assert_eq!(m.edits.annotations[0].opacity, 1.0);
+        m.validate().unwrap();
+        for (k, n) in [
+            (AnnotationKind::Text, "text"),
+            (AnnotationKind::Rect, "rect"),
+            (AnnotationKind::Ellipse, "ellipse"),
+            (AnnotationKind::Highlight, "highlight"),
+            (AnnotationKind::Blur, "blur"),
+            (AnnotationKind::Pixelate, "pixelate"),
+        ] {
+            assert_eq!(serde_json::to_value(k).unwrap(), n);
+        }
+        // Missing field in older projects -> empty.
+        let mut old = serde_json::to_value(sample()).unwrap();
+        old["edits"].as_object_mut().unwrap().remove("annotations");
+        let old: Project = serde_json::from_value(old).unwrap();
+        assert!(old.edits.annotations.is_empty());
+    }
+
+    #[test]
+    fn annotation_ranges_are_validated() {
+        let bad = |f: &dyn Fn(&mut Annotation)| {
+            let mut p = sample();
+            let mut a = ann(AnnotationKind::Rect);
+            f(&mut a);
+            p.edits.annotations = vec![a];
+            p.validate().is_err()
+        };
+        let ok = |f: &dyn Fn(&mut Annotation)| !bad(f);
+        assert!(ok(&|_| {}));
+        assert!(bad(&|a| a.id = "x".repeat(65)));
+        assert!(ok(&|a| a.id = "x".repeat(64)));
+        assert!(bad(&|a| {
+            a.start_ms = 5;
+            a.end_ms = 4;
+        }));
+        assert!(ok(&|a| a.end_ms = limits::MAX_DURATION_MS));
+        assert!(bad(&|a| a.end_ms = limits::MAX_DURATION_MS + 1));
+        for set in [
+            (|a: &mut Annotation, v| a.x = v) as fn(&mut Annotation, f64),
+            |a, v| a.y = v,
+            |a, v| a.w = v,
+            |a, v| a.h = v,
+            |a, v| a.x2 = v,
+            |a, v| a.y2 = v,
+            |a, v| a.opacity = v,
+            |a, v| a.strength = v,
+            |a, v| a.dim = v,
+        ] {
+            assert!(bad(&|a| set(a, -0.01)));
+            assert!(bad(&|a| set(a, 1.01)));
+            assert!(bad(&|a| set(a, f64::NAN)));
+            assert!(ok(&|a| set(a, 0.0)));
+            assert!(ok(&|a| set(a, 1.0)));
+        }
+        assert!(ok(&|a| a.stroke_width = 1.0) && ok(&|a| a.stroke_width = 40.0));
+        assert!(bad(&|a| a.stroke_width = 0.99) && bad(&|a| a.stroke_width = 40.1));
+        assert!(ok(&|a| a.font_size = 8.0) && ok(&|a| a.font_size = 200.0));
+        assert!(bad(&|a| a.font_size = 7.0) && bad(&|a| a.font_size = 201.0));
+        assert!(ok(&|a| a.corner_radius = 200.0) && bad(&|a| a.corner_radius = 200.5));
+        assert!(ok(&|a| a.fade_ms = 2000) && bad(&|a| a.fade_ms = 2001));
+        assert!(ok(&|a| a.text = "é".repeat(500)));
+        assert!(bad(&|a| a.text = "x".repeat(501)));
+        let mut many = sample();
+        many.edits.annotations = vec![ann(AnnotationKind::Rect); 501];
+        assert!(many.validate().is_err());
+        many.edits.annotations.truncate(500);
+        many.validate().unwrap();
+        assert!(serde_json::from_str::<Annotation>(r#"{"kind":"laser"}"#).is_err());
+        assert!(serde_json::from_str::<Annotation>(r##"{"kind":"rect","color":"red"}"##).is_err());
+    }
+
+    #[test]
+    fn webcam_effects_defaults_wire_and_ranges() {
+        let d = WebcamStyle::default();
+        assert!(!d.mirror && !d.chroma_key.enabled);
+        assert_eq!((d.brightness, d.contrast, d.saturation), (0.0, 1.0, 1.0));
+        assert_eq!(d.shadow, 0.4, "default keeps the old fixed shadow");
+        assert_eq!(d.background.kind, WebcamBackgroundKind::None);
+        let v = serde_json::to_value(sample()).unwrap();
+        let w = &v["edits"]["style"]["webcam"];
+        assert_eq!(w["mirror"], false);
+        assert_eq!(w["chromaKey"]["color"], "#00ff00");
+        assert_eq!(w["background"]["kind"], "none");
+        for k in [
+            "brightness",
+            "contrast",
+            "saturation",
+            "shadow",
+            "borderWidth",
+            "borderColor",
+        ] {
+            assert!(w.get(k).is_some(), "{k}");
+        }
+        let kinds = ["none", "color", "gradient", "image", "blur"];
+        for k in kinds {
+            let b: WebcamBackground =
+                serde_json::from_value(serde_json::json!({ "kind": k })).unwrap();
+            assert_eq!(serde_json::to_value(b.kind).unwrap(), k);
+        }
+        let ok = |f: &dyn Fn(&mut WebcamStyle)| {
+            let mut p = sample();
+            f(&mut p.edits.style.webcam);
+            p.validate().is_ok()
+        };
+        assert!(ok(&|w| w.brightness = -1.0) && ok(&|w| w.brightness = 1.0));
+        assert!(!ok(&|w| w.brightness = 1.01) && !ok(&|w| w.brightness = -1.01));
+        assert!(
+            ok(&|w| w.contrast = 0.0) && ok(&|w| w.contrast = 2.0) && !ok(&|w| w.contrast = 2.01)
+        );
+        assert!(ok(&|w| w.saturation = 2.0) && !ok(&|w| w.saturation = -0.1));
+        assert!(ok(&|w| w.border_width = 20.0) && !ok(&|w| w.border_width = 20.1));
+        assert!(ok(&|w| w.shadow = 1.0) && !ok(&|w| w.shadow = 1.1));
+        for set in [
+            (|w: &mut WebcamStyle, v| w.chroma_key.similarity = v) as fn(&mut WebcamStyle, f64),
+            |w, v| w.chroma_key.smoothness = v,
+            |w, v| w.chroma_key.spill = v,
+            |w, v| w.background.blur = v,
+        ] {
+            assert!(ok(&|w| set(w, 0.0)) && ok(&|w| set(w, 1.0)));
+            assert!(
+                !ok(&|w| set(w, 1.01)) && !ok(&|w| set(w, -0.01)) && !ok(&|w| set(w, f64::NAN))
+            );
+        }
+        // Background image / gradient names and strings are validated.
+        assert!(ok(&|w| w.background.image = Some("bg.png".into())));
+        assert!(!ok(&|w| w.background.image = Some("..\\bg.png".into())));
+        assert!(!ok(&|w| w.background.image = Some("bg.gif".into())));
+        assert!(!ok(
+            &|w| w.background.gradient = "x".repeat(limits::MAX_STRING + 1)
+        ));
+    }
+
+    /// `fixtures/project.editor-v2.json`: every editor-v2 field populated, so the UI
+    /// side can build against (and test with) the exact wire shape.
+    #[test]
+    fn editor_v2_fixture_matches_the_types() {
+        let mut p = sample();
+        p.name = "Editor v2 fixture".into();
+        p.edits.speed = vec![
+            SpeedSegment {
+                start_ms: 500,
+                end_ms: 1000,
+                speed: 2.0,
+            },
+            SpeedSegment {
+                start_ms: 1000,
+                end_ms: 2000,
+                speed: 0.5,
+            },
+        ];
+        p.edits.style.frame = WindowFrame::Laptop;
+        p.edits.style.background_image = Some(BackgroundImage {
+            file: "background-0123456789abcdef.png".into(),
+            fit: BackgroundFit::Contain,
+            blur: 12.0,
+        });
+        let w = &mut p.edits.style.webcam;
+        w.enabled = true;
+        w.margin = 0.05;
+        w.border_width = 4.0;
+        w.border_color = Rgba([0x4e, 0xd2, 0xfb, 255]);
+        w.mirror = true;
+        w.brightness = 0.1;
+        w.contrast = 1.1;
+        w.saturation = 1.2;
+        w.shadow = 0.6;
+        w.chroma_key.enabled = true;
+        w.background.kind = WebcamBackgroundKind::Image;
+        w.background.image = Some("background-0123456789abcdef.png".into());
+        let kinds = [
+            AnnotationKind::Arrow,
+            AnnotationKind::Text,
+            AnnotationKind::Rect,
+            AnnotationKind::Ellipse,
+            AnnotationKind::Highlight,
+            AnnotationKind::Spotlight,
+            AnnotationKind::Blur,
+            AnnotationKind::Pixelate,
+        ];
+        p.edits.annotations = kinds
+            .iter()
+            .enumerate()
+            .map(|(i, &kind)| Annotation {
+                id: format!("ann-{i}"),
+                kind,
+                start_ms: 100 * i as u64,
+                end_ms: 100 * i as u64 + 1500,
+                x: 0.1,
+                y: 0.2,
+                w: 0.3,
+                h: 0.2,
+                x2: 0.7,
+                y2: 0.6,
+                text: if kind == AnnotationKind::Text {
+                    "Look here".into()
+                } else {
+                    String::new()
+                },
+                ..Annotation::default()
+            })
+            .collect();
+        p.validate().unwrap();
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/project.editor-v2.json");
+        let value = serde_json::to_value(&p).unwrap();
+        if std::env::var_os("FROSTCAP_UPDATE_FIXTURES").is_some() {
+            fs::write(&path, serde_json::to_string_pretty(&value).unwrap() + "\n").unwrap();
+        }
+        let raw: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(raw, value, "stale fixture (set FROSTCAP_UPDATE_FIXTURES=1)");
+        let back: Project = serde_json::from_value(raw).unwrap();
+        assert_eq!(back, p);
+        back.validate().unwrap();
     }
 }

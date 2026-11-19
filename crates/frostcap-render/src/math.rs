@@ -92,14 +92,56 @@ pub struct Layout {
     pub radius: f64,
     /// Style unit: output height / 1080.
     pub unit: f64,
+    /// Device bezel thickness around the content (0 for plain frames).
+    pub bezel: f64,
+    /// Laptop keyboard base height below the window (0 otherwise).
+    pub base_h: f64,
+    /// How far the laptop base sticks out past each side of the window.
+    pub base_overhang: f64,
 }
 
 /// Title bar height for a frame style at `unit` (output height / 1080).
 pub fn bar_height(frame: Frame, unit: f64) -> f64 {
     match frame {
-        Frame::None => 0.0,
+        Frame::None | Frame::Laptop | Frame::Phone => 0.0,
         Frame::Minimal => 22.0 * unit,
         Frame::Windows | Frame::MacOs => 34.0 * unit,
+    }
+}
+
+/// Bezel thickness of a device mockup at `unit`.
+pub fn bezel_width(frame: Frame, unit: f64) -> f64 {
+    match frame {
+        Frame::Laptop => 14.0 * unit,
+        Frame::Phone => 16.0 * unit,
+        _ => 0.0,
+    }
+}
+
+/// Keyboard base height of the laptop mockup at `unit`.
+pub fn base_height(frame: Frame, unit: f64) -> f64 {
+    if frame == Frame::Laptop {
+        20.0 * unit
+    } else {
+        0.0
+    }
+}
+
+/// Overhang of the laptop base past the lid on each side.
+pub fn base_overhang(frame: Frame, unit: f64) -> f64 {
+    if frame == Frame::Laptop {
+        10.0 * unit
+    } else {
+        0.0
+    }
+}
+
+/// Outer corner radius: devices have their own, plain frames use the style.
+fn frame_radius(frame: Frame, style_radius: f64, unit: f64) -> f64 {
+    match frame {
+        Frame::Laptop => 12.0 * unit,
+        Frame::Phone => 40.0 * unit,
+        _ => style_radius * unit,
     }
 }
 
@@ -109,8 +151,12 @@ pub fn layout(w: f64, h: f64, src_w: f64, src_h: f64, p: &RenderProject) -> Layo
     let unit = h / 1080.0;
     let pad = (st.padding / 100.0) * w.min(h * 1.78);
     let bar_h = bar_height(st.frame, unit);
-    let avail_w = w - pad * 2.0;
-    let avail_h = h - pad * 2.0;
+    let bezel = bezel_width(st.frame, unit);
+    let base_h = base_height(st.frame, unit);
+    let base_overhang = base_overhang(st.frame, unit);
+    // Room left for the content once the device parts around it are reserved.
+    let avail_w = w - pad * 2.0 - 2.0 * (bezel + base_overhang);
+    let avail_h = h - pad * 2.0 - 2.0 * bezel - base_h;
     let aspect = if src_h > 0.0 {
         src_w / src_h
     } else {
@@ -122,26 +168,32 @@ pub fn layout(w: f64, h: f64, src_w: f64, src_h: f64, p: &RenderProject) -> Layo
         ch = avail_h - bar_h;
         cw = ch * aspect;
     }
-    let rx = (w - cw) / 2.0;
-    let ry = (h - ch - bar_h) / 2.0;
-    let wh = ch + bar_h;
-    let radius = (st.radius * unit).min(cw / 2.0).min(wh / 2.0).max(0.0);
+    let (ww, wh) = (cw + 2.0 * bezel, ch + bar_h + 2.0 * bezel);
+    let rx = (w - ww) / 2.0;
+    let ry = (h - wh - base_h) / 2.0;
+    let radius = frame_radius(st.frame, st.radius, unit)
+        .min(ww / 2.0)
+        .min(wh / 2.0)
+        .max(0.0);
     Layout {
         window: RectF {
             x: rx,
             y: ry,
-            w: cw,
+            w: ww,
             h: wh,
         },
         bar_h,
         content: RectF {
-            x: rx,
-            y: ry + bar_h,
+            x: rx + bezel,
+            y: ry + bezel + bar_h,
             w: cw,
             h: ch,
         },
         radius,
         unit,
+        bezel,
+        base_h,
+        base_overhang,
     }
 }
 
@@ -389,6 +441,48 @@ mod tests {
         // 9:16 is width-limited.
         let v = layout(1080.0, 1920.0, 1600.0, 900.0, &p);
         assert!((v.content.w - (1080.0 - 2.0 * 0.08 * 1080.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn device_frames_add_a_bezel_and_a_laptop_base_inside_the_padding() {
+        for frame in [Frame::None, Frame::Minimal, Frame::Windows, Frame::MacOs] {
+            let mut p = project();
+            p.style.frame = frame;
+            let l = layout(1920.0, 1080.0, 1600.0, 900.0, &p);
+            assert_eq!(
+                (l.bezel, l.base_h, l.base_overhang),
+                (0.0, 0.0, 0.0),
+                "{frame:?}"
+            );
+        }
+        for frame in [Frame::Laptop, Frame::Phone] {
+            let mut p = project();
+            p.style.frame = frame;
+            for (w, h) in [(1920.0, 1080.0), (1080.0, 1920.0), (1080.0, 1080.0)] {
+                let l = layout(w, h, 1600.0, 900.0, &p);
+                let unit = h / 1080.0;
+                assert!(l.bezel > 0.0, "{frame:?}");
+                assert_eq!(l.bar_h, 0.0, "device frames have no title bar");
+                assert!((l.content.x - l.window.x - l.bezel).abs() < 1e-9);
+                assert!((l.content.y - l.window.y - l.bezel).abs() < 1e-9);
+                assert!((l.window.w - l.content.w - 2.0 * l.bezel).abs() < 1e-9);
+                assert!((l.window.h - l.content.h - 2.0 * l.bezel).abs() < 1e-9);
+                assert!((l.content.w / l.content.h - 16.0 / 9.0).abs() < 1e-9);
+                // Window + base (+ overhang) stay inside the padding band, centred.
+                let pad = 0.08 * w.min(h * 1.78);
+                let total_h = l.window.h + l.base_h;
+                assert!(total_h <= h - 2.0 * pad + 1e-6, "{frame:?} {w}x{h}");
+                assert!(l.window.w + 2.0 * l.base_overhang <= w - 2.0 * pad + 1e-6);
+                assert!((l.window.y - (h - total_h) / 2.0).abs() < 1e-9);
+                assert!((l.window.x - (w - l.window.w) / 2.0).abs() < 1e-9);
+                if frame == Frame::Laptop {
+                    assert!(l.base_h > 0.0 && l.base_overhang > 0.0);
+                } else {
+                    assert_eq!((l.base_h, l.base_overhang), (0.0, 0.0));
+                    assert!(l.radius > 20.0 * unit, "phones are well rounded");
+                }
+            }
+        }
     }
 
     #[test]

@@ -3,6 +3,7 @@ import { AnimatePresence, m } from "motion/react";
 import { AlertTriangle, Info, X } from "lucide-react";
 import { useApp } from "../store/app";
 import { softSpring } from "./ui";
+import { t as tr } from "../i18n";
 
 /**
  * Toast stack. Errors use role=alert and persist until dismissed; others
@@ -29,7 +30,7 @@ export function Toasts() {
   }, []);
 
   return (
-    <div className="toasts" role="region" aria-label="Notifications" ref={regionRef}>
+    <div className="toasts" role="region" aria-label={tr("toasts.region")} ref={regionRef}>
       <AnimatePresence initial={false}>
         {toasts.map((t) => (
           <m.div
@@ -51,7 +52,7 @@ export function Toasts() {
             <span className="toast__text">{t.text}</span>
             {t.action && (
               <>
-                <span className="sr-only">Press F6 to reach the {t.action.label} button.</span>
+                <span className="sr-only">{tr("toasts.f6", { label: t.action.label })}</span>
                 <button
                   type="button"
                   className="btn btn--sm"
@@ -65,7 +66,7 @@ export function Toasts() {
                 </button>
               </>
             )}
-            <button type="button" className="iconbtn" style={{ width: 26, height: 26 }} aria-label="Dismiss" onClick={() => dismiss(t.id)}>
+            <button type="button" className="iconbtn" style={{ width: 26, height: 26 }} aria-label={tr("common.dismiss")} onClick={() => dismiss(t.id)}>
               <X size={14} />
             </button>
           </m.div>

@@ -27,6 +27,21 @@ pub struct Overlay {
     pub rgba: Vec<u8>,
 }
 
+/// A text annotation to rasterize into the annotation layer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextItem {
+    /// Text (wrapped to the box width, centred in the box).
+    pub text: String,
+    /// sRGB colour 0..1.
+    pub color: [f32; 3],
+    /// Opacity 0..1 (already faded).
+    pub alpha: f32,
+    /// Font size in output px.
+    pub font_px: f32,
+    /// Box (x0, y0, x1, y1) in output px.
+    pub rect: [f32; 4],
+}
+
 /// A loaded font.
 pub struct TextRenderer {
     font: TtFont,
@@ -281,6 +296,55 @@ impl TextRenderer {
     }
 
     /// Caption sprite, same layout as the preview (step 7 of `renderFrame`).
+    /// Rasterize text annotations into one output-sized premultiplied RGBA8
+    /// layer (`None` when nothing visible was drawn).
+    pub fn annotation_layer(
+        &self,
+        items: &[TextItem],
+        out_w: usize,
+        out_h: usize,
+    ) -> Option<Vec<u8>> {
+        let mut layer = vec![0.0f32; out_w * out_h * 4];
+        let mut any = false;
+        for it in items {
+            let text: String = it.text.chars().take(MAX_CUE_CHARS).collect();
+            let box_w = (it.rect[2] - it.rect[0]).max(1.0);
+            let lines = self.wrap(&text, it.font_px, box_w);
+            if lines.is_empty() || it.alpha <= 0.0 {
+                continue;
+            }
+            let lh = it.font_px * 1.3;
+            let block_h = lines.len() as f32 * lh;
+            let (cx, cy) = (
+                (it.rect[0] + it.rect[2]) / 2.0,
+                (it.rect[1] + it.rect[3]) / 2.0,
+            );
+            let mut mask = vec![0.0f32; out_w * out_h];
+            for (i, l) in lines.iter().enumerate() {
+                let ly = cy - block_h / 2.0 + lh / 2.0 + i as f32 * lh;
+                self.draw_text(&mut mask, out_w, out_h, l, it.font_px, cx, ly);
+            }
+            for (i, m) in mask.iter().enumerate() {
+                let a = m * it.alpha;
+                if a > 0.0 {
+                    any = true;
+                    let d = &mut layer[i * 4..i * 4 + 4];
+                    for c in 0..3 {
+                        d[c] = it.color[c] * a + d[c] * (1.0 - a);
+                    }
+                    d[3] = a + d[3] * (1.0 - a);
+                }
+            }
+        }
+        any.then(|| {
+            layer
+                .iter()
+                .map(|v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+                .collect()
+        })
+    }
+
+    /// Caption sprite.
     pub fn caption(
         &self,
         text: &str,
@@ -469,6 +533,54 @@ mod tests {
             "{}",
             area(&mixed)
         );
+    }
+
+    #[test]
+    fn annotation_text_layer_is_boxed_premultiplied_and_scaled_by_alpha() {
+        let Some(t) = TextRenderer::load_system() else {
+            eprintln!("no system font; skipped");
+            return;
+        };
+        let item = |text: &str, alpha: f32| TextItem {
+            text: text.into(),
+            color: [1.0, 1.0, 1.0],
+            alpha,
+            font_px: 40.0,
+            rect: [100.0, 100.0, 300.0, 160.0],
+        };
+        let (w, h) = (400usize, 300usize);
+        let layer = t.annotation_layer(&[item("Hello", 1.0)], w, h).unwrap();
+        assert_eq!(layer.len(), w * h * 4);
+        let px = |x: usize, y: usize| &layer[(y * w + x) * 4..(y * w + x) * 4 + 4];
+        let inside = (100..300)
+            .flat_map(|x| (100..160).map(move |y| (x, y)))
+            .filter(|&(x, y)| px(x, y)[3] > 200)
+            .count();
+        assert!(inside > 100, "glyph pixels inside the box: {inside}");
+        let outside = (0..w)
+            .flat_map(|x| (0..h).map(move |y| (x, y)))
+            .filter(|&(x, y)| !(90..310).contains(&x) || !(90..170).contains(&y))
+            .filter(|&(x, y)| px(x, y)[3] != 0)
+            .count();
+        assert_eq!(outside, 0, "nothing far outside the box");
+        let half = t.annotation_layer(&[item("Hello", 0.5)], w, h).unwrap();
+        assert!(
+            half.chunks(4).all(|p| p[3] <= 128 && p[0] <= p[3]),
+            "premultiplied, alpha-scaled"
+        );
+        assert!(half.chunks(4).any(|p| p[3] > 100));
+        // Long text wraps inside the box width; empty text draws nothing.
+        let long = "word ".repeat(30);
+        let wrapped = t.annotation_layer(&[item(&long, 1.0)], w, h).unwrap();
+        let min_x = (0..w)
+            .find(|&x| (0..h).any(|y| wrapped[(y * w + x) * 4 + 3] > 0))
+            .unwrap();
+        assert!(
+            min_x >= 90,
+            "wrapped text stays within the box width (min x {min_x})"
+        );
+        assert!(t.annotation_layer(&[item("   ", 1.0)], w, h).is_none());
+        assert!(t.annotation_layer(&[], w, h).is_none());
     }
 
     #[test]

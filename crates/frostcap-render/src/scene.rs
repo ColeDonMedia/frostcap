@@ -2,12 +2,14 @@
 //! Pure CPU code (deterministic for a given project + time), unit tested.
 
 use crate::math::{self, RectF};
-use crate::model::{Frame, RenderProject, WebcamShape};
+use crate::model::{AnnKind, Frame, RenderProject, WebcamShape};
 
 /// Maximum simultaneous click ripples / cursor draws passed to the shader.
 pub const MAX_RIPPLES: usize = 8;
 /// Main cursor + up to 3 motion-blur ghosts.
 pub const MAX_CURSORS: usize = 4;
+/// Maximum annotations drawn in one frame.
+pub const MAX_ANNS: usize = 8;
 /// Maximum gradient stops.
 pub const MAX_STOPS: usize = 8;
 
@@ -34,6 +36,51 @@ pub struct Webcam {
     pub radius: f64,
     /// Shadow sigma.
     pub shadow_sigma: f64,
+    /// Border width (inside the rect), 0 = none.
+    pub border: f64,
+    /// Border colour (sRGB 0..1 RGBA).
+    pub border_color: [f64; 4],
+    /// Flip horizontally.
+    pub mirror: bool,
+    /// brightness, contrast, saturation, shadow strength.
+    pub fx: [f64; 4],
+    /// Chroma key.
+    pub key: Option<crate::model::Key>,
+    /// Replacement kind: 0 none, 1 colour, 2 gradient, 3 image, 4 blur.
+    pub bg_kind: f64,
+    /// Colour, or first gradient stop.
+    pub bg_c1: [f64; 4],
+    /// Last gradient stop.
+    pub bg_c2: [f64; 4],
+    /// Gradient angle (deg).
+    pub bg_angle: f64,
+    /// Blur amount.
+    pub bg_blur: f64,
+}
+
+/// One visible annotation in output pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneAnn {
+    /// Index into `RenderProject::annotations`.
+    pub index: usize,
+    /// Shape.
+    pub kind: AnnKind,
+    /// Rect (x0, y0, x1, y1) or arrow (x_start, y_start, x_end, y_end).
+    pub geom: [f64; 4],
+    /// Colour.
+    pub color: [f64; 3],
+    /// Opacity after fading.
+    pub alpha: f64,
+    /// Stroke width px.
+    pub stroke: f64,
+    /// Filled.
+    pub fill: bool,
+    /// Corner radius px.
+    pub radius: f64,
+    /// Blur / pixel amount 0..1.
+    pub strength: f64,
+    /// Spotlight dim.
+    pub dim: f64,
 }
 
 /// Key overlay state.
@@ -66,6 +113,12 @@ pub struct Scene {
     pub radius: f64,
     /// Bar height after zoom.
     pub bar_h: f64,
+    /// Device bezel thickness after zoom (0 for plain frames).
+    pub bezel: f64,
+    /// Laptop base height after zoom (0 otherwise).
+    pub base_h: f64,
+    /// Laptop base overhang per side after zoom.
+    pub base_overhang: f64,
     /// Frame style.
     pub frame: Frame,
     /// Style unit after zoom (unit * s).
@@ -88,6 +141,8 @@ pub struct Scene {
     pub caption: Option<usize>,
     /// Key overlay.
     pub keys: Option<Keys>,
+    /// Active annotations (at most [`MAX_ANNS`]).
+    pub annotations: Vec<SceneAnn>,
 }
 
 /// Key overlay timing (ms).
@@ -134,6 +189,7 @@ pub fn build(p: &RenderProject, w: f64, h: f64, t: f64, has_webcam: bool) -> Sce
     let shadow = (st.shadow > 0.0).then(|| {
         let s = st.shadow / 100.0;
         let mut rect = xf.rect(lay.window);
+        rect.h += lay.base_h * xf.s; // the laptop's base casts the same shadow
         rect.y += s * 24.0 * unit;
         Shadow {
             rect,
@@ -181,7 +237,7 @@ pub fn build(p: &RenderProject, w: f64, h: f64, t: f64, has_webcam: bool) -> Sce
 
     let webcam = (st.webcam_enabled && has_webcam).then(|| {
         let sz = st.webcam_size * h;
-        let m = 28.0 * unit;
+        let m = st.webcam_margin * h;
         let (left, top) = st.webcam_corner;
         Webcam {
             rect: RectF {
@@ -196,6 +252,44 @@ pub fn build(p: &RenderProject, w: f64, h: f64, t: f64, has_webcam: bool) -> Sce
                 WebcamShape::Square => 6.0 * unit,
             },
             shadow_sigma: 12.0 * unit,
+            border: st.webcam_border_width * unit,
+            border_color: st.webcam_border_color,
+            mirror: st.webcam_mirror,
+            fx: [
+                st.webcam_brightness,
+                st.webcam_contrast,
+                st.webcam_saturation,
+                st.webcam_shadow,
+            ],
+            key: st.webcam_key,
+            bg_kind: match &st.webcam_bg {
+                crate::model::WebcamBg::None => 0.0,
+                crate::model::WebcamBg::Color(_) => 1.0,
+                crate::model::WebcamBg::Gradient(_) => 2.0,
+                crate::model::WebcamBg::Image(_) => 3.0,
+                crate::model::WebcamBg::Blur(_) => 4.0,
+            },
+            bg_c1: match &st.webcam_bg {
+                crate::model::WebcamBg::Color(c) => *c,
+                crate::model::WebcamBg::Gradient(g) => {
+                    g.stops.first().copied().unwrap_or([0.0, 0.0, 0.0, 1.0])
+                }
+                _ => [0.0; 4],
+            },
+            bg_c2: match &st.webcam_bg {
+                crate::model::WebcamBg::Gradient(g) => {
+                    g.stops.last().copied().unwrap_or([0.0, 0.0, 0.0, 1.0])
+                }
+                _ => [0.0; 4],
+            },
+            bg_angle: match &st.webcam_bg {
+                crate::model::WebcamBg::Gradient(g) => g.angle_deg,
+                _ => 0.0,
+            },
+            bg_blur: match &st.webcam_bg {
+                crate::model::WebcamBg::Blur(b) => *b,
+                _ => 0.0,
+            },
         }
     });
 
@@ -206,6 +300,40 @@ pub fn build(p: &RenderProject, w: f64, h: f64, t: f64, has_webcam: bool) -> Sce
     };
 
     let video = xf.rect(content);
+    let annotations: Vec<SceneAnn> = p
+        .annotations
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| t >= a.start && t <= a.end)
+        .take(MAX_ANNS)
+        .map(|(index, a)| {
+            let k = if a.fade > 0.0 {
+                ((t - a.start) / a.fade)
+                    .min((a.end - t) / a.fade)
+                    .clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            let (px, py) = (video.x + a.x * video.w, video.y + a.y * video.h);
+            let geom = if a.kind == AnnKind::Arrow {
+                [px, py, video.x + a.x2 * video.w, video.y + a.y2 * video.h]
+            } else {
+                [px, py, px + a.w * video.w, py + a.h * video.h]
+            };
+            SceneAnn {
+                index,
+                kind: a.kind,
+                geom,
+                color: a.color,
+                alpha: a.opacity * k,
+                stroke: a.stroke * unit,
+                fill: a.fill,
+                radius: a.radius * unit,
+                strength: a.strength,
+                dim: a.dim,
+            }
+        })
+        .collect();
     let ratio = src_w / video.w.max(1.0);
     Scene {
         t_src: t,
@@ -223,6 +351,9 @@ pub fn build(p: &RenderProject, w: f64, h: f64, t: f64, has_webcam: bool) -> Sce
         window: xf.rect(lay.window),
         radius: lay.radius * xf.s,
         bar_h: lay.bar_h * xf.s,
+        bezel: lay.bezel * xf.s,
+        base_h: lay.base_h * xf.s,
+        base_overhang: lay.base_overhang * xf.s,
         frame: st.frame,
         unit_s: unit * xf.s,
         video,
@@ -234,13 +365,14 @@ pub fn build(p: &RenderProject, w: f64, h: f64, t: f64, has_webcam: bool) -> Sce
         webcam,
         caption,
         keys: key_overlay(p, t),
+        annotations,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Easing, KeyPress, ZoomSegment};
+    use crate::model::{Ann, Easing, KeyPress, ZoomSegment};
 
     #[test]
     fn unzoomed_scene_has_padding_and_shadow() {
@@ -302,6 +434,162 @@ mod tests {
         assert!(build(&p, 1280.0, 720.0, 2000.0, false).keys.is_none());
         p.cursor_baked = true;
         assert!(build(&p, 1280.0, 720.0, 500.0, false).cursors.is_empty());
+    }
+
+    #[test]
+    fn webcam_margin_and_border_follow_the_style() {
+        let mut p = RenderProject::empty_for_tests();
+        p.style.webcam_enabled = true;
+        p.style.webcam_size = 0.2;
+        // Default margin is the old 28 px at 1080p, and scales with the height.
+        let w = build(&p, 1920.0, 1080.0, 0.0, true).webcam.unwrap();
+        assert!((1920.0 - w.rect.x1() - 28.0).abs() < 1e-9);
+        assert!((1080.0 - w.rect.y1() - 28.0).abs() < 1e-9);
+        assert_eq!(w.border, 0.0);
+        let w = build(&p, 1280.0, 720.0, 0.0, true).webcam.unwrap();
+        assert!((1280.0 - w.rect.x1() - 28.0 * 720.0 / 1080.0).abs() < 1e-9);
+        p.style.webcam_margin = 0.1;
+        p.style.webcam_border_width = 10.0;
+        p.style.webcam_corner = (true, true);
+        let w = build(&p, 1920.0, 1080.0, 0.0, true).webcam.unwrap();
+        assert!((w.rect.x - 108.0).abs() < 1e-9 && (w.rect.y - 108.0).abs() < 1e-9);
+        assert!((w.border - 10.0).abs() < 1e-9);
+        // A margin of zero hugs the corner.
+        p.style.webcam_margin = 0.0;
+        let w = build(&p, 1920.0, 1080.0, 0.0, true).webcam.unwrap();
+        assert_eq!((w.rect.x, w.rect.y), (0.0, 0.0));
+    }
+
+    #[test]
+    fn laptop_shadow_covers_the_base_and_zoom_scales_the_device() {
+        let mut p = RenderProject::empty_for_tests();
+        p.style.frame = Frame::Laptop;
+        let a = build(&p, 1920.0, 1080.0, 0.0, false);
+        assert!(a.bezel > 0.0 && a.base_h > 0.0 && a.base_overhang > 0.0);
+        let sh = a.shadow.unwrap();
+        // Shadow rect = lid + base (offset down by the style's shadow shift).
+        assert!((sh.rect.h - (a.window.h + a.base_h)).abs() < 1e-9);
+        p.zooms = vec![ZoomSegment {
+            start_ms: 0.0,
+            end_ms: 2000.0,
+            cx: 0.5,
+            cy: 0.5,
+            scale: 2.0,
+            easing: Easing::Linear,
+            transition_ms: 100.0,
+        }];
+        let z = build(&p, 1920.0, 1080.0, 1000.0, false);
+        assert!((z.bezel / a.bezel - 2.0).abs() < 1e-9);
+        assert!((z.base_h / a.base_h - 2.0).abs() < 1e-9);
+        let mut ph = RenderProject::empty_for_tests();
+        ph.style.frame = Frame::Phone;
+        let s = build(&ph, 1920.0, 1080.0, 0.0, false);
+        assert!(s.bezel > 0.0 && s.base_h == 0.0);
+    }
+
+    fn ann(kind: AnnKind, start: f64, end: f64) -> Ann {
+        Ann {
+            id: "a".into(),
+            kind,
+            start,
+            end,
+            x: 0.25,
+            y: 0.5,
+            w: 0.5,
+            h: 0.25,
+            x2: 0.75,
+            y2: 0.9,
+            color: [1.0, 0.0, 0.0],
+            stroke: 10.0,
+            fill: false,
+            text: String::new(),
+            font: 40.0,
+            opacity: 0.8,
+            strength: 0.5,
+            dim: 0.6,
+            radius: 12.0,
+            fade: 200.0,
+        }
+    }
+
+    #[test]
+    fn annotations_are_timed_faded_and_follow_the_content_rect() {
+        let mut p = RenderProject::empty_for_tests();
+        p.annotations = vec![ann(AnnKind::Rect, 1000.0, 2000.0)];
+        let at = |p: &RenderProject, t: f64| build(p, 1920.0, 1080.0, t, false);
+        assert!(at(&p, 900.0).annotations.is_empty());
+        assert!(at(&p, 2100.0).annotations.is_empty());
+        let (a, b, c) = (at(&p, 1100.0), at(&p, 1500.0), at(&p, 1900.0));
+        assert!(
+            (a.annotations[0].alpha - 0.4).abs() < 1e-9,
+            "fade in halfway"
+        );
+        assert!((b.annotations[0].alpha - 0.8).abs() < 1e-9);
+        assert!(
+            (c.annotations[0].alpha - 0.4).abs() < 1e-9,
+            "fade out halfway"
+        );
+        // Geometry is the normalized rect inside the (unzoomed) video rect.
+        let s = at(&p, 1500.0);
+        let v = s.video;
+        let g = s.annotations[0].geom;
+        assert!(
+            (g[0] - (v.x + 0.25 * v.w)).abs() < 1e-9 && (g[1] - (v.y + 0.5 * v.h)).abs() < 1e-9
+        );
+        assert!(
+            (g[2] - (v.x + 0.75 * v.w)).abs() < 1e-9 && (g[3] - (v.y + 0.75 * v.h)).abs() < 1e-9
+        );
+        // Stroke and radius scale with the output size, not with the zoom.
+        assert!((s.annotations[0].stroke - 10.0).abs() < 1e-9);
+        let small = build(&p, 960.0, 540.0, 1500.0, false);
+        assert!((small.annotations[0].stroke - 5.0).abs() < 1e-9);
+        // Zoom 2x: the rect scales with the video, the stroke does not.
+        p.zooms = vec![ZoomSegment {
+            start_ms: 0.0,
+            end_ms: 3000.0,
+            cx: 0.5,
+            cy: 0.5,
+            scale: 2.0,
+            easing: Easing::Linear,
+            transition_ms: 0.0,
+        }];
+        let z = at(&p, 1500.0);
+        let zg = z.annotations[0].geom;
+        assert!(((zg[2] - zg[0]) / (g[2] - g[0]) - 2.0).abs() < 1e-9);
+        assert!((z.annotations[0].stroke - 10.0).abs() < 1e-9);
+        // Arrows keep their two endpoints in geom.
+        p.zooms.clear();
+        p.annotations = vec![ann(AnnKind::Arrow, 0.0, 3000.0)];
+        let ar = at(&p, 1500.0).annotations[0].geom;
+        assert!(
+            (ar[0] - (v.x + 0.25 * v.w)).abs() < 1e-9 && (ar[3] - (v.y + 0.9 * v.h)).abs() < 1e-9
+        );
+        // No fade -> full opacity right at the start.
+        p.annotations[0].fade = 0.0;
+        assert!((at(&p, 0.0).annotations[0].alpha - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn at_most_eight_annotations_are_drawn_and_text_is_indexed() {
+        let mut p = RenderProject::empty_for_tests();
+        p.annotations = (0..12)
+            .map(|_| ann(AnnKind::Highlight, 0.0, 5000.0))
+            .collect();
+        assert_eq!(
+            build(&p, 1920.0, 1080.0, 100.0, false).annotations.len(),
+            MAX_ANNS
+        );
+        p.annotations = vec![
+            ann(AnnKind::Rect, 0.0, 10.0),
+            ann(AnnKind::Text, 0.0, 5000.0),
+        ];
+        let s = build(&p, 1920.0, 1080.0, 100.0, false);
+        assert_eq!(s.annotations.len(), 1);
+        assert_eq!(
+            s.annotations[0].index, 1,
+            "index into RenderProject::annotations"
+        );
+        assert_eq!(s.annotations[0].kind, AnnKind::Text);
     }
 
     #[test]

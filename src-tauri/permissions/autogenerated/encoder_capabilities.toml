@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-encoder-capabilities"
+description = "Enables the encoder_capabilities command without any pre-configured scope."
+commands.allow = ["encoder_capabilities"]
+
+[[permission]]
+identifier = "deny-encoder-capabilities"
+description = "Denies the encoder_capabilities command without any pre-configured scope."
+commands.deny = ["encoder_capabilities"]

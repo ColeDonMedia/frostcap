@@ -36,6 +36,17 @@ pub fn run() {
             backend::hotkeys,
             backend::set_hotkeys,
             backend::default_output_dir,
+            backend::launch_options,
+            backend::export_batch,
+            backend::encoder_capabilities,
+            backend::suggest_cuts,
+            backend::pick_image,
+            backend::import_background,
+            backend::write_selftest_report,
+            backend::selftest_cleanup,
+            backend::capture_settings,
+            backend::set_capture_border,
+            backend::set_exclude_own_windows,
         ])
         .setup(|app| {
             frostcap_core::recorder::ensure_dpi_awareness();
@@ -73,6 +84,7 @@ pub fn run() {
     app.run(|app, event| {
         if let RunEvent::ExitRequested { .. } | RunEvent::Exit = event {
             let _ = backend::stop_active(app, &app.state::<backend::AppState>());
+            frostcap_export::release_gpu();
         }
     });
 }

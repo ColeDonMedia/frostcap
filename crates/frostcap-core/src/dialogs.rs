@@ -11,9 +11,9 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Shell::Common::{COMDLG_FILTERSPEC, ITEMIDLIST};
 use windows::Win32::UI::Shell::{
-    FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST, FOS_PICKFOLDERS, FileOpenDialog,
-    FileSaveDialog, IFileDialog, IFileOpenDialog, IFileSaveDialog, ILFree,
-    SHOpenFolderAndSelectItems, SHParseDisplayName, SIGDN_FILESYSPATH,
+    FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST,
+    FOS_PICKFOLDERS, FileOpenDialog, FileSaveDialog, IFileDialog, IFileOpenDialog, IFileSaveDialog,
+    ILFree, SHOpenFolderAndSelectItems, SHParseDisplayName, SIGDN_FILESYSPATH,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -74,6 +74,25 @@ pub fn pick_folder(owner: Option<isize>, title: &str) -> Result<Option<PathBuf>>
                 d.GetOptions()? | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST,
             )?;
             d.SetTitle(&title)?;
+            show(&d.into(), owner)
+        }
+    })
+}
+
+/// Pick a `.png` / `.jpg` / `.jpeg` image file. `None` if cancelled.
+pub fn pick_image(owner: Option<isize>) -> Result<Option<PathBuf>> {
+    on_sta(move || {
+        let label = HSTRING::from("Images (*.png, *.jpg, *.jpeg)");
+        let spec = HSTRING::from("*.png;*.jpg;*.jpeg");
+        // SAFETY: standard dialog setup; filter strings outlive the call.
+        unsafe {
+            let d: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+            d.SetOptions(d.GetOptions()? | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST)?;
+            let filters = [COMDLG_FILTERSPEC {
+                pszName: PCWSTR(label.as_ptr()),
+                pszSpec: PCWSTR(spec.as_ptr()),
+            }];
+            d.SetFileTypes(&filters)?;
             show(&d.into(), owner)
         }
     })
@@ -159,4 +178,23 @@ pub fn reveal_in_folder(path: &Path) -> Result<()> {
         }
         Ok(())
     })
+}
+
+/// Native Yes/No warning box owned by `owner`; the default button is No. `true` only
+/// when the user chose Yes.
+pub fn confirm(owner: Option<isize>, title: &str, text: &str) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_YESNO, MessageBoxW,
+    };
+    let (title, text) = (HSTRING::from(title), HSTRING::from(text));
+    // SAFETY: modal message box with valid wide strings; `owner` is a window handle or none.
+    let r = unsafe {
+        MessageBoxW(
+            owner.map(|h| HWND(h as *mut _)),
+            &text,
+            &title,
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND,
+        )
+    };
+    r == IDYES
 }

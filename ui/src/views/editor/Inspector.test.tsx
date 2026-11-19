@@ -59,7 +59,7 @@ describe("Cursor tab", () => {
 describe("Inspector tabs", () => {
   it("every aria-controls points at an element that exists", () => {
     const tabs = [...r.container.querySelectorAll("[role=tab]")];
-    expect(tabs.length).toBe(6);
+    expect(tabs.length).toBe(7);
     for (const t of tabs) {
       const id = t.getAttribute("aria-controls");
       if (id) expect(document.getElementById(id), id).not.toBeNull();

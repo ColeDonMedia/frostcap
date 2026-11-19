@@ -10,6 +10,10 @@
 //! video t = 0 and stays aligned with `screen.mp4` (`offsetMs` = 0, within one
 //! device period).
 //!
+//! Drift: the position is re-anchored at **every packet** (silence is inserted when the
+//! file is behind, surplus samples are dropped when it is ahead, beyond a 20 ms
+//! tolerance), so a device clock that is a few hundred ppm off never accumulates.
+//!
 //! Long-recording safety: the RIFF header is re-patched every few seconds so a
 //! crash leaves a playable file; write errors (e.g. disk full) end the thread
 //! with an error that the session reports.
@@ -24,7 +28,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Media::Audio::{
-    AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
+    AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY, AUDCLNT_BUFFERFLAGS_SILENT,
+    AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
     IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX,
     eCapture, eConsole, eRender,
 };
@@ -61,6 +66,12 @@ pub struct AudioCaptureInfo {
     pub frames: u64,
     /// Frames of silence inserted to keep sync.
     pub padded_frames: u64,
+    /// Frames dropped to keep sync (device clock faster than the video clock).
+    pub dropped_frames: u64,
+    /// Frames of a timeline gap that were too large to pad in one go (device fault).
+    pub unfilled_frames: u64,
+    /// Packets WASAPI flagged as discontinuity or bad timestamp.
+    pub glitch_packets: u64,
     /// Why capture ended early, if it did (the partial WAV is kept).
     pub error: Option<crate::error::ErrorPayload>,
 }
@@ -177,32 +188,33 @@ unsafe fn copy_format(p: *const WAVEFORMATEX) -> Format {
     }
 }
 
-/// Minimal streaming RIFF/WAVE writer.
-pub(crate) struct WavWriter {
-    w: BufWriter<File>,
+/// Minimal streaming WAV writer: RIFF, upgraded in place to RF64 beyond 4 GiB.
+pub(crate) struct WavWriter<W: Write + Seek = File> {
+    w: BufWriter<W>,
+    header: crate::wav::Header,
+    block: u16,
     data_bytes: u64,
-    data_size_pos: u64,
 }
 
-impl WavWriter {
+impl WavWriter<File> {
     pub(crate) fn create(path: &Path, fmt_chunk: &[u8]) -> std::io::Result<Self> {
-        let mut w = BufWriter::with_capacity(256 * 1024, File::create(path)?);
-        w.write_all(b"RIFF")?;
-        w.write_all(&0u32.to_le_bytes())?; // patched in checkpoint/finish
-        w.write_all(b"WAVE")?;
-        w.write_all(b"fmt ")?;
-        w.write_all(&(fmt_chunk.len() as u32).to_le_bytes())?;
-        w.write_all(fmt_chunk)?;
-        if fmt_chunk.len() % 2 == 1 {
-            w.write_all(&[0])?;
-        }
-        w.write_all(b"data")?;
-        let data_size_pos = w.stream_position()?;
-        w.write_all(&0u32.to_le_bytes())?;
+        Self::with_sink(File::create(path)?, fmt_chunk)
+    }
+}
+
+impl<W: Write + Seek> WavWriter<W> {
+    pub(crate) fn with_sink(sink: W, fmt_chunk: &[u8]) -> std::io::Result<Self> {
+        let header = crate::wav::header(fmt_chunk);
+        let mut w = BufWriter::with_capacity(256 * 1024, sink);
+        w.write_all(&header.bytes)?;
+        let block = fmt_chunk
+            .get(12..14)
+            .map_or(1, |b| u16::from_le_bytes([b[0], b[1]]));
         Ok(Self {
             w,
+            header,
+            block,
             data_bytes: 0,
-            data_size_pos,
         })
     }
     pub(crate) fn write(&mut self, bytes: &[u8]) -> std::io::Result<()> {
@@ -219,30 +231,29 @@ impl WavWriter {
         }
         Ok(())
     }
-    fn patch_sizes(&mut self, pad: bool) -> std::io::Result<()> {
+    fn patch_sizes(&mut self) -> std::io::Result<()> {
         let end = self.w.stream_position()?;
-        let data = u32::try_from(self.data_bytes).unwrap_or(u32::MAX);
-        let riff = u32::try_from(end + u64::from(pad) - 8).unwrap_or(u32::MAX);
-        self.w.seek(SeekFrom::Start(4))?;
-        self.w.write_all(&riff.to_le_bytes())?;
-        self.w.seek(SeekFrom::Start(self.data_size_pos))?;
-        self.w.write_all(&data.to_le_bytes())?;
+        for (off, bytes) in crate::wav::patch_ops(&self.header, end, self.data_bytes, self.block) {
+            self.w.seek(SeekFrom::Start(off))?;
+            self.w.write_all(&bytes)?;
+        }
         self.w.seek(SeekFrom::Start(end))?;
         Ok(())
     }
     /// Flush and patch the header so the file is valid if the process dies.
     pub(crate) fn checkpoint(&mut self) -> std::io::Result<()> {
-        self.patch_sizes(false)?;
+        self.patch_sizes()?;
         self.w.flush()
     }
-    pub(crate) fn finish(mut self) -> std::io::Result<()> {
-        let pad = self.data_bytes % 2 == 1;
-        if pad {
+    /// Pad to an even length, patch the header and hand back the sink.
+    pub(crate) fn finish(mut self) -> std::io::Result<W> {
+        if self.data_bytes % 2 == 1 {
             self.w.write_all(&[0])?;
         }
-        self.patch_sizes(false)?;
-        self.w.flush()?;
-        self.w.get_ref().sync_all()
+        self.patch_sizes()?;
+        self.w
+            .into_inner()
+            .map_err(std::io::IntoInnerError::into_error)
     }
 }
 
@@ -257,6 +268,79 @@ fn pad_frames(pos_hns: i64, rate: u32, frames: u64, slack: u64) -> u64 {
         expected - frames
     } else {
         0
+    }
+}
+
+/// What to do with one packet so the file stays on the timeline.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PacketPlan {
+    /// Frames of silence to write first (file is behind: slow device clock, stall).
+    pad: u64,
+    /// Frames to drop from the start of the packet (file is ahead: fast device clock).
+    skip: u64,
+    /// Frames of a gap that were NOT padded because of [`MAX_PAD_SECS`] (reported as a
+    /// discontinuity; later packets keep closing the gap one bound at a time).
+    excess: u64,
+}
+
+/// Most silence written for one packet (seconds). A larger gap is a clock or device
+/// fault, not something to fill in one go.
+const MAX_PAD_SECS: u64 = 1;
+
+/// The WASAPI buffer flags that change how a packet is aligned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PacketFlags {
+    /// `AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR`: the QPC position is unreliable.
+    timestamp_error: bool,
+    /// `AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY`: the device dropped or glitched data.
+    discontinuity: bool,
+}
+
+impl PacketFlags {
+    fn from_wasapi(flags: u32) -> Self {
+        Self {
+            timestamp_error: flags & (AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32) != 0,
+            discontinuity: flags & (AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32) != 0,
+        }
+    }
+}
+
+/// Re-anchor the file to the timeline at every packet: `pos_hns` is the packet's own
+/// QPC position mapped through the timeline, `frames` the frames written so far and
+/// `n` the packet length. Differences up to `slack` frames (device jitter) are kept;
+/// beyond that silence is inserted or surplus samples are dropped, so the device
+/// clock's drift against the QPC never accumulates over long recordings.
+fn plan_packet(
+    pos_hns: i64,
+    rate: u32,
+    frames: u64,
+    n: u64,
+    slack: u64,
+    flags: PacketFlags,
+) -> PacketPlan {
+    // A bad timestamp says nothing about where the packet belongs: keep it as it is.
+    if flags.timestamp_error {
+        return PacketPlan::default();
+    }
+    let expected = frames_at(pos_hns, rate);
+    let max_pad = u64::from(rate) * MAX_PAD_SECS;
+    // After a reported glitch the gap is filled even when it is within the jitter slack.
+    let tolerance = if flags.discontinuity { 0 } else { slack };
+    if expected > frames.saturating_add(tolerance) {
+        let gap = expected - frames;
+        PacketPlan {
+            pad: gap.min(max_pad),
+            skip: 0,
+            excess: gap.saturating_sub(max_pad),
+        }
+    } else if frames > expected.saturating_add(slack) && !flags.discontinuity {
+        PacketPlan {
+            pad: 0,
+            skip: (frames - expected).min(n),
+            excess: 0,
+        }
+    } else {
+        PacketPlan::default()
     }
 }
 
@@ -291,6 +375,9 @@ fn run(
     let mut start_pos: Option<i64> = None;
     let mut frames: u64 = 0;
     let mut padded: u64 = 0;
+    let mut dropped: u64 = 0;
+    let mut unfilled: u64 = 0;
+    let mut glitches: u64 = 0;
     let mut last_checkpoint = Instant::now();
 
     let result: Result<()> = (|| {
@@ -308,7 +395,8 @@ fn run(
                 let mut qpc: u64 = 0;
                 // SAFETY: valid out params; buffer released below.
                 unsafe { capture.GetBuffer(&mut data, &mut n, &mut flags, None, Some(&mut qpc)) }?;
-                let ts = if qpc > 0 {
+                let pflags = PacketFlags::from_wasapi(flags);
+                let ts = if qpc > 0 && !pflags.timestamp_error {
                     qpc as i64
                 } else {
                     clock::now_hns()
@@ -318,21 +406,26 @@ fn run(
                         return Ok(());
                     };
                     start_pos.get_or_insert(0);
-                    let pad = pad_frames(pos, rate, frames, slack);
-                    if pad > 0 {
-                        wav.silence(pad as usize * block).map_err(io)?;
-                        padded += pad;
-                        frames += pad;
+                    let plan = plan_packet(pos, rate, frames, u64::from(n), slack, pflags);
+                    unfilled += plan.excess;
+                    glitches += u64::from(pflags.discontinuity || pflags.timestamp_error);
+                    if plan.pad > 0 {
+                        wav.silence(plan.pad as usize * block).map_err(io)?;
+                        padded += plan.pad;
+                        frames += plan.pad;
                     }
-                    let bytes = n as usize * block;
+                    // Device clock ahead of the timeline: drop the surplus from the packet start.
+                    let skip = plan.skip as usize;
+                    dropped += plan.skip;
+                    let bytes = (n as usize - skip) * block;
                     if flags & (AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0 || data.is_null() {
                         wav.silence(bytes).map_err(io)?;
                     } else {
                         // SAFETY: WASAPI guarantees `n * block_align` readable bytes.
-                        wav.write(unsafe { std::slice::from_raw_parts(data, bytes) })
-                            .map_err(io)?;
+                        let all = unsafe { std::slice::from_raw_parts(data, n as usize * block) };
+                        wav.write(&all[skip * block..]).map_err(io)?;
                     }
-                    frames += u64::from(n);
+                    frames += u64::from(n) - plan.skip;
                     Ok(())
                 })();
                 // SAFETY: releasing the buffer obtained above.
@@ -369,7 +462,7 @@ fn run(
     }
     // SAFETY: stopping the client we started.
     let _ = unsafe { client.Stop() };
-    let finished = wav.finish().map_err(io);
+    let finished = wav.finish().and_then(|f| f.sync_all()).map_err(io);
     let failure = result.err().or(finished.err());
     if frames == 0
         && let Some(e) = failure
@@ -386,6 +479,9 @@ fn run(
         channels: fmt.channels,
         frames,
         padded_frames: padded,
+        dropped_frames: dropped,
+        unfilled_frames: unfilled,
+        glitch_packets: glitches,
     })
 }
 
@@ -466,6 +562,122 @@ mod tests {
         );
     }
 
+    /// Simulated device clock: the device produces `rate * (1 + ppm/1e6)` frames per
+    /// true second; each packet carries its true start time (QPC). The file must stay
+    /// within one packet + the jitter slack of the timeline for the whole hour.
+    fn simulate(ppm: f64, secs: u64) -> (u64, u64, u64) {
+        let rate = 48_000u32;
+        let slack = u64::from(rate) / 50;
+        let packet = 480u64;
+        let dev_rate = f64::from(rate) * (1.0 + ppm / 1e6);
+        let (mut frames, mut padded, mut dropped) = (0u64, 0u64, 0u64);
+        let mut worst = 0i64;
+        let mut k = 0u64;
+        loop {
+            let true_s = (k * packet) as f64 / dev_rate;
+            if true_s >= secs as f64 {
+                break;
+            }
+            let pos = (true_s * HNS_PER_SEC as f64) as i64;
+            let plan = plan_packet(pos, rate, frames, packet, slack, PacketFlags::default());
+            padded += plan.pad;
+            dropped += plan.skip;
+            frames += plan.pad + packet - plan.skip;
+            let drift = frames as i64
+                - frames_at(pos + packet as i64 * HNS_PER_SEC / i64::from(rate), rate) as i64;
+            worst = worst.max(drift.abs());
+            k += 1;
+        }
+        assert!(
+            worst <= (slack + packet) as i64,
+            "drift {worst} frames at {ppm} ppm"
+        );
+        (padded, dropped, frames)
+    }
+
+    #[test]
+    fn fast_device_clock_is_trimmed_not_accumulated() {
+        let (padded, dropped, _) = simulate(500.0, 3600);
+        assert_eq!(padded, 0);
+        // 500 ppm over an hour = 1.8 s of surplus audio (86 400 frames), dropped in steps.
+        assert!((80_000..=90_000).contains(&dropped), "{dropped}");
+    }
+
+    #[test]
+    fn slow_device_clock_is_padded_with_silence() {
+        let (padded, dropped, _) = simulate(-500.0, 3600);
+        assert_eq!(dropped, 0);
+        assert!((80_000..=90_000).contains(&padded), "{padded}");
+    }
+
+    #[test]
+    fn perfect_clock_is_left_alone() {
+        assert_eq!(simulate(0.0, 600), (0, 0, 600 * 48_000));
+    }
+
+    #[test]
+    fn small_jitter_inside_the_slack_is_ignored() {
+        let p = plan_packet(
+            100 * clock::HNS_PER_MS,
+            48_000,
+            4_000,
+            480,
+            960,
+            PacketFlags::default(),
+        );
+        assert_eq!((p.pad, p.skip), (0, 0));
+        // 1 s ahead of the timeline: drop the surplus, never more than the packet.
+        let p = plan_packet(0, 48_000, 48_000, 480, 960, PacketFlags::default());
+        assert_eq!((p.pad, p.skip), (0, 480));
+    }
+
+    const BAD_TS: PacketFlags = PacketFlags {
+        timestamp_error: true,
+        discontinuity: false,
+    };
+    const GLITCH: PacketFlags = PacketFlags {
+        timestamp_error: false,
+        discontinuity: true,
+    };
+
+    #[test]
+    fn a_timestamp_error_never_re_anchors() {
+        // 10 s "ahead" and 10 s "behind" timestamps are both ignored.
+        for pos in [0, 20 * HNS_PER_SEC] {
+            let p = plan_packet(10 * HNS_PER_SEC, 48_000, 48_000 * 10, 480, 960, BAD_TS);
+            assert_eq!((p.pad, p.skip, p.excess), (0, 0, 0));
+            let p = plan_packet(pos, 48_000, 48_000 * 10, 480, 960, BAD_TS);
+            assert_eq!((p.pad, p.skip, p.excess), (0, 0, 0), "pos {pos}");
+        }
+    }
+
+    #[test]
+    fn padding_is_bounded_to_one_second_and_the_rest_is_reported() {
+        // File is 5 s behind: pad 1 s now, report 4 s as not filled.
+        let p = plan_packet(5 * HNS_PER_SEC, 48_000, 0, 480, 960, PacketFlags::default());
+        assert_eq!(p.pad, 48_000);
+        assert_eq!(p.excess, 4 * 48_000);
+        // A gap under the bound is filled completely with nothing reported.
+        let p = plan_packet(HNS_PER_SEC / 2, 48_000, 0, 480, 960, PacketFlags::default());
+        assert_eq!((p.pad, p.excess), (24_000, 0));
+    }
+
+    #[test]
+    fn a_discontinuity_pads_even_a_small_gap_up_to_the_bound() {
+        // 10 ms behind is inside the jitter slack for a normal packet ...
+        let behind = 100 * clock::HNS_PER_MS;
+        let normal = plan_packet(behind, 48_000, 4_000, 480, 960, PacketFlags::default());
+        assert_eq!(normal.pad, 0);
+        // ... but after a reported glitch the gap is filled.
+        let g = plan_packet(behind, 48_000, 4_000, 480, 960, GLITCH);
+        assert_eq!(g.pad, 4_800 - 4_000);
+        let g = plan_packet(30 * HNS_PER_SEC, 48_000, 0, 480, 960, GLITCH);
+        assert_eq!((g.pad, g.excess), (48_000, 29 * 48_000));
+        // A discontinuity never drops audio.
+        let g = plan_packet(0, 48_000, 48_000, 480, 960, GLITCH);
+        assert_eq!(g.skip, 0);
+    }
+
     #[test]
     fn frames_at_rounds_down() {
         assert_eq!(frames_at(HNS_PER_SEC, 48_000), 48_000);
@@ -489,7 +701,8 @@ mod tests {
         w.write(&[1, 2, 3, 4]).unwrap();
         w.checkpoint().unwrap();
         let b = std::fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(b[40..44].try_into().unwrap()), 4);
+        let info = crate::wav::parse(&b, b.len() as u64).unwrap();
+        assert_eq!(info.data_len, 4);
         w.silence(6).unwrap();
         w.finish().unwrap();
         let b = std::fs::read(&path).unwrap();
@@ -498,7 +711,86 @@ mod tests {
             u32::from_le_bytes(b[4..8].try_into().unwrap()) as usize,
             b.len() - 8
         );
-        assert_eq!(u32::from_le_bytes(b[40..44].try_into().unwrap()), 10);
+        let info = crate::wav::parse(&b, b.len() as u64).unwrap();
+        assert_eq!(info.data_len, 10);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Sink that keeps only the first bytes of what is written (a 5 GiB file without 5 GiB of disk).
+    #[derive(Default)]
+    struct HeadSink {
+        head: Vec<u8>,
+        pos: u64,
+        len: u64,
+    }
+    impl Write for HeadSink {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            let end = self.pos + b.len() as u64;
+            if self.pos < 512 {
+                let keep = (512 - self.pos).min(b.len() as u64) as usize;
+                if self.head.len() < self.pos as usize + keep {
+                    self.head.resize(self.pos as usize + keep, 0);
+                }
+                self.head[self.pos as usize..self.pos as usize + keep].copy_from_slice(&b[..keep]);
+            }
+            self.pos = end;
+            self.len = self.len.max(end);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Seek for HeadSink {
+        fn seek(&mut self, p: SeekFrom) -> std::io::Result<u64> {
+            self.pos = match p {
+                SeekFrom::Start(o) => o,
+                SeekFrom::End(d) => self.len.saturating_add_signed(d),
+                SeekFrom::Current(d) => self.pos.saturating_add_signed(d),
+            };
+            Ok(self.pos)
+        }
+    }
+
+    impl WavWriter<HeadSink> {
+        fn sink_head(&self) -> Vec<u8> {
+            self.w.get_ref().head.clone()
+        }
+    }
+
+    fn pcm_fmt() -> Vec<u8> {
+        let mut fmt = Vec::new();
+        fmt.extend_from_slice(&1u16.to_le_bytes());
+        fmt.extend_from_slice(&2u16.to_le_bytes());
+        fmt.extend_from_slice(&48_000u32.to_le_bytes());
+        fmt.extend_from_slice(&192_000u32.to_le_bytes());
+        fmt.extend_from_slice(&4u16.to_le_bytes());
+        fmt.extend_from_slice(&16u16.to_le_bytes());
+        fmt
+    }
+
+    #[test]
+    fn wav_writer_switches_to_rf64_beyond_4_gib() {
+        let mut w = WavWriter::with_sink(HeadSink::default(), &pcm_fmt()).unwrap();
+        let chunk = vec![0u8; 1 << 20];
+        for _ in 0..3 * 1024 {
+            w.write(&chunk).unwrap();
+        }
+        w.checkpoint().unwrap();
+        let info = crate::wav::parse(&w.sink_head(), 0).unwrap();
+        assert!(!info.rf64, "3 GiB still fits RIFF");
+        assert_eq!(info.data_len, 3 << 30);
+        for _ in 0..2 * 1024 {
+            w.write(&chunk).unwrap();
+        }
+        w.checkpoint().unwrap();
+        let info = crate::wav::parse(&w.sink_head(), 0).unwrap();
+        assert!(info.rf64, "5 GiB must be RF64");
+        assert_eq!(info.data_len, 5 << 30);
+        assert_eq!(info.frames(), (5u64 << 30) / 4);
+        let sink = w.finish().unwrap();
+        let info = crate::wav::parse(&sink.head, sink.len).unwrap();
+        assert!(info.rf64 && info.data_len == 5 << 30);
+        assert_eq!(info.riff_len, sink.len - 8);
     }
 }

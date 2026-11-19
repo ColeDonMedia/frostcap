@@ -9,7 +9,7 @@ use std::task::{Context, Poll, Wake, Waker};
 
 use crate::error::{RenderError, Result};
 use crate::model::Frame;
-use crate::scene::{MAX_CURSORS, MAX_RIPPLES, MAX_STOPS, Scene};
+use crate::scene::{MAX_ANNS, MAX_CURSORS, MAX_RIPPLES, MAX_STOPS, Scene};
 use crate::text::Overlay;
 
 struct ThreadWaker(std::thread::Thread);
@@ -71,15 +71,141 @@ pub fn check_dims(what: &str, (w, h): (u32, u32), max: u32) -> Result<()> {
     Ok(())
 }
 
-/// GPU device.
+/// Shader module, pipelines and sampler: built once per device.
+pub struct Pipelines {
+    sampler: wgpu::Sampler,
+    p_conv: wgpu::RenderPipeline,
+    p_down: wgpu::RenderPipeline,
+    p_comp: wgpu::RenderPipeline,
+    p_y: wgpu::RenderPipeline,
+    p_uv: wgpu::RenderPipeline,
+}
+
+/// GPU device. Cheap to clone (the device, queue and pipelines are shared).
+#[derive(Clone)]
 pub struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
     errors: ErrorSink,
+    pipes: Arc<std::sync::OnceLock<Pipelines>>,
     /// Adapter name.
     pub adapter: String,
     /// True when running on the WARP software rasterizer.
     pub software: bool,
+    /// Policy this device was created under (cache key).
+    policy: (bool, bool),
+}
+
+static SHARED: std::sync::Mutex<Option<Gpu>> = std::sync::Mutex::new(None);
+
+impl ErrorSink {
+    fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Gpu {
+    /// A process-wide cached device (created on first use, replaced once it has
+    /// recorded an error). Reusing it skips adapter/device creation and shader
+    /// compilation on every export after the first. `FROSTCAP_NO_GPU_CACHE=1`
+    /// disables the cache (A/B measurements).
+    pub fn shared(allow_software: bool, force_software: bool) -> Result<Self> {
+        if std::env::var_os("FROSTCAP_NO_GPU_CACHE").is_some_and(|v| v == "1") {
+            return Self::new(allow_software, force_software);
+        }
+        let mut g = SHARED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(c) = g.as_ref()
+            && c.errors.check().is_ok()
+            && c.policy == (allow_software, force_software)
+        {
+            return Ok(c.clone());
+        }
+        let fresh = Self::new(allow_software, force_software)?;
+        *g = Some(fresh.clone());
+        Ok(fresh)
+    }
+
+    /// Drop the cached device (frees GPU memory when the app is idle).
+    pub fn release_shared() {
+        *SHARED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
+    /// Whether both handles use the same underlying device.
+    pub fn same_device(&self, other: &Self) -> bool {
+        self.errors.same(&other.errors)
+    }
+
+    /// Record an uncaptured-style error (tests / device-lost handling).
+    pub fn record_error(&self, msg: String) {
+        self.errors.record(msg);
+    }
+
+    /// No error has been recorded on this device.
+    pub fn errors_ok(&self) -> bool {
+        self.errors.check().is_ok()
+    }
+
+    /// The shared pipelines (built on first call).
+    pub fn pipelines(&self) -> &Pipelines {
+        self.pipes.get_or_init(|| self.build_pipelines())
+    }
+
+    fn build_pipelines(&self) -> Pipelines {
+        let d = &self.device;
+        let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("frostcap shaders"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders.wgsl").into()),
+        });
+        let pipe = |fs: &str, fmt: wgpu::TextureFormat| {
+            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(fs),
+                layout: None,
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_full"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: fmt,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        use wgpu::TextureFormat as F;
+        Pipelines {
+            p_conv: pipe("fs_nv12", F::Rgba8Unorm),
+            p_down: pipe("fs_down", F::Rgba8Unorm),
+            p_comp: pipe("fs_composite", F::Rgba8Unorm),
+            p_y: pipe("fs_y", F::R8Unorm),
+            p_uv: pipe("fs_uv", F::Rg8Unorm),
+            sampler: d.create_sampler(&wgpu::SamplerDescriptor {
+                label: None,
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Linear,
+                ..Default::default()
+            }),
+        }
+    }
 }
 
 impl Gpu {
@@ -136,8 +262,10 @@ impl Gpu {
             device,
             queue,
             errors,
+            pipes: Arc::new(std::sync::OnceLock::new()),
             adapter: format!("{} ({:?})", info.name, info.device_type),
             software: info.device_type == wgpu::DeviceType::Cpu,
+            policy: (allow_software, force_software),
         })
     }
 }
@@ -193,6 +321,9 @@ pub struct Compositor {
     cap_tex: Option<(wgpu::Texture, [f32; 4])>,
     keys_tex: Option<(wgpu::Texture, [f32; 4])>,
     comp_bg: Option<wgpu::BindGroup>,
+    bg_tex: Option<wgpu::Texture>,
+    ann_tex: Option<wgpu::Texture>,
+    cambg_tex: Option<wgpu::Texture>,
     uniforms: wgpu::Buffer,
     out: wgpu::Texture,
     y_out: wgpu::Texture,
@@ -204,7 +335,7 @@ pub struct Compositor {
     ring: usize,
 }
 
-const UNIFORM_VEC4S: usize = 36;
+const UNIFORM_VEC4S: usize = 77;
 
 fn align256(x: u32) -> u32 {
     x.div_ceil(256) * 256
@@ -286,53 +417,16 @@ impl Compositor {
             check_dims("webcam source", c, max)?;
         }
         let d = &gpu.device;
-        let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("frostcap shaders"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders.wgsl").into()),
-        });
-        let pipe = |fs: &str, fmt: wgpu::TextureFormat| {
-            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(fs),
-                layout: None,
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_full"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some(fs),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
         use wgpu::TextureFormat as F;
-        let p_conv = pipe("fs_nv12", F::Rgba8Unorm);
-        let p_down = pipe("fs_down", F::Rgba8Unorm);
-        let p_comp = pipe("fs_composite", F::Rgba8Unorm);
-        let p_y = pipe("fs_y", F::R8Unorm);
-        let p_uv = pipe("fs_uv", F::Rg8Unorm);
-        let sampler = d.create_sampler(&wgpu::SamplerDescriptor {
-            label: None,
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            ..Default::default()
-        });
+        let pl = gpu.pipelines();
+        let (p_conv, p_down, p_comp, p_y, p_uv, sampler) = (
+            pl.p_conv.clone(),
+            pl.p_down.clone(),
+            pl.p_comp.clone(),
+            pl.p_y.clone(),
+            pl.p_uv.clone(),
+            pl.sampler.clone(),
+        );
         let video_tex = |w: u32, h: u32, levels: u32| -> VideoTex {
             use wgpu::TextureUsages as U;
             let full = 32 - w.max(h).max(1).leading_zeros();
@@ -493,6 +587,9 @@ impl Compositor {
             cap_tex: None,
             keys_tex: None,
             comp_bg: None,
+            bg_tex: None,
+            ann_tex: None,
+            cambg_tex: None,
             uniforms,
             out,
             y_out,
@@ -605,6 +702,104 @@ impl Compositor {
         v.dirty_mips = true;
     }
 
+    /// Upload a tight RGBA webcam frame (tests / synthetic input).
+    pub fn upload_webcam_rgba(&mut self, rgba: &[u8]) {
+        if let Some(v) = self.cam.as_mut() {
+            self.gpu.queue.write_texture(
+                v.rgba.as_image_copy(),
+                rgba,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(v.w * 4),
+                    rows_per_image: None,
+                },
+                wgpu::Extent3d {
+                    width: v.w,
+                    height: v.h,
+                    depth_or_array_layers: 1,
+                },
+            );
+            v.dirty_nv12 = false;
+            v.dirty_mips = true;
+        }
+    }
+
+    fn rgba_tex(&self, b: &[u8], w: u32, h: u32) -> wgpu::Texture {
+        let t = tex(
+            &self.gpu.device,
+            w,
+            h,
+            wgpu::TextureFormat::Rgba8Unorm,
+            1,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        self.gpu.queue.write_texture(
+            t.as_image_copy(),
+            b,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        t
+    }
+
+    /// Set (or clear) the annotation text layer: premultiplied RGBA8 of exactly
+    /// the output size, composited inside the screen content.
+    pub fn set_annotation_text(&mut self, rgba: Option<&[u8]>) {
+        self.comp_bg = None;
+        self.ann_tex = rgba
+            .filter(|b| b.len() == (self.w * self.h * 4) as usize)
+            .map(|b| self.rgba_tex(b, self.w, self.h));
+    }
+
+    /// Set (or clear) the webcam background image: premultiplied RGBA8, `side x side`.
+    pub fn set_webcam_background(&mut self, img: Option<(&[u8], u32)>) {
+        self.comp_bg = None;
+        self.cambg_tex = img
+            .filter(|(b, n)| *n > 0 && b.len() == (*n * *n * 4) as usize)
+            .map(|(b, n)| self.rgba_tex(b, n, n));
+    }
+
+    /// Set (or clear) the background image: premultiplied RGBA8 of exactly the
+    /// output size (see `background::compose`), drawn over the gradient.
+    pub fn set_background(&mut self, rgba: Option<&[u8]>) {
+        self.comp_bg = None;
+        self.bg_tex = rgba
+            .filter(|b| b.len() == (self.w * self.h * 4) as usize)
+            .map(|b| {
+                let t = tex(
+                    &self.gpu.device,
+                    self.w,
+                    self.h,
+                    wgpu::TextureFormat::Rgba8Unorm,
+                    1,
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                );
+                self.gpu.queue.write_texture(
+                    t.as_image_copy(),
+                    b,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(self.w * 4),
+                        rows_per_image: None,
+                    },
+                    wgpu::Extent3d {
+                        width: self.w,
+                        height: self.h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                t
+            });
+    }
+
     fn overlay_tex(&self, o: &Overlay) -> (wgpu::Texture, [f32; 4]) {
         use wgpu::TextureUsages as U;
         let t = tex(
@@ -677,8 +872,10 @@ impl Compositor {
             Frame::Minimal => 1.0,
             Frame::Windows => 2.0,
             Frame::MacOs => 3.0,
+            Frame::Laptop => 4.0,
+            Frame::Phone => 5.0,
         };
-        v4(s.radius, s.bar_h, kind, 0.0);
+        v4(s.radius, s.bar_h, kind, s.bezel);
         v4(s.video.x, s.video.y, s.video.x1(), s.video.y1());
         v4(
             s.ripples.len().min(MAX_RIPPLES) as f64,
@@ -721,6 +918,74 @@ impl Compositor {
         let r = self.keys_tex.as_ref().map_or([0.0; 4], |c| c.1);
         v4(r[0] as f64, r[1] as f64, r[2] as f64, r[3] as f64);
         v4(keys_alpha, 0.0, 0.0, 0.0);
+        let border = s.webcam.as_ref().map_or(0.0, |w| w.border);
+        let wc = s.webcam;
+        v4(
+            s.base_h,
+            s.base_overhang,
+            border,
+            if self.bg_tex.is_some() { 1.0 } else { 0.0 },
+        );
+        let bc = s.webcam.as_ref().map_or([0.0; 4], |w| w.border_color);
+        v4(bc[0], bc[1], bc[2], bc[3]);
+        match wc {
+            Some(w) => {
+                v4(w.fx[0], w.fx[1], w.fx[2], w.fx[3]);
+                let k = w.key.unwrap_or(crate::model::Key {
+                    color: [0.0; 3],
+                    similarity: 0.0,
+                    smoothness: 0.0,
+                    spill: 0.0,
+                });
+                v4(k.color[0], k.color[1], k.color[2], k.similarity);
+                v4(
+                    k.smoothness,
+                    k.spill,
+                    if w.key.is_some() { 1.0 } else { 0.0 },
+                    if w.mirror { 1.0 } else { 0.0 },
+                );
+                v4(w.bg_kind, w.bg_blur, w.bg_angle.to_radians(), 0.0);
+                v4(w.bg_c1[0], w.bg_c1[1], w.bg_c1[2], w.bg_c1[3]);
+                v4(w.bg_c2[0], w.bg_c2[1], w.bg_c2[2], w.bg_c2[3]);
+            }
+            None => {
+                v4(0.0, 1.0, 1.0, 0.4);
+                for _ in 0..5 {
+                    v4(0.0, 0.0, 0.0, 0.0);
+                }
+            }
+        }
+        v4(
+            s.annotations.len().min(MAX_ANNS) as f64,
+            if self.ann_tex.is_some() { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        );
+        for i in 0..MAX_ANNS {
+            match s.annotations.get(i) {
+                Some(a) => {
+                    v4(a.geom[0], a.geom[1], a.geom[2], a.geom[3]);
+                    v4(a.color[0], a.color[1], a.color[2], a.alpha);
+                    let kind = match a.kind {
+                        crate::model::AnnKind::Arrow => 0.0,
+                        crate::model::AnnKind::Text => 1.0,
+                        crate::model::AnnKind::Rect => 2.0,
+                        crate::model::AnnKind::Ellipse => 3.0,
+                        crate::model::AnnKind::Highlight => 4.0,
+                        crate::model::AnnKind::Spotlight => 5.0,
+                        crate::model::AnnKind::Blur => 6.0,
+                        crate::model::AnnKind::Pixelate => 7.0,
+                    };
+                    v4(kind, a.stroke, if a.fill { 1.0 } else { 0.0 }, a.radius);
+                    v4(a.strength, a.dim, 0.0, 0.0);
+                }
+                None => {
+                    for _ in 0..4 {
+                        v4(0.0, 0.0, 0.0, 0.0);
+                    }
+                }
+            }
+        }
         debug_assert_eq!(u.len(), UNIFORM_VEC4S * 4);
         u
     }
@@ -742,6 +1007,9 @@ impl Compositor {
             .keys_tex
             .as_ref()
             .map_or_else(|| blank.clone(), |c| view(&c.0));
+        let bgt = self.bg_tex.as_ref().map_or_else(|| blank.clone(), view);
+        let annt = self.ann_tex.as_ref().map_or_else(|| blank.clone(), view);
+        let cambg = self.cambg_tex.as_ref().map_or_else(|| blank.clone(), view);
         let bg = self
             .gpu
             .device
@@ -772,6 +1040,18 @@ impl Compositor {
                     wgpu::BindGroupEntry {
                         binding: 5,
                         resource: wgpu::BindingResource::TextureView(&keys),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::TextureView(&bgt),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::TextureView(&cambg),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: wgpu::BindingResource::TextureView(&annt),
                     },
                 ],
             });
@@ -989,7 +1269,7 @@ fn f32_bytes(v: &[f32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::RenderProject;
+    use crate::model::{Frame, RenderProject};
     use crate::scene;
 
     #[test]
@@ -1105,5 +1385,679 @@ mod tests {
         // Centre is the (red) video.
         let mid = px(w / 2, h / 2);
         assert!(mid[0] > 250 && mid[1] < 5 && mid[2] < 5, "{mid:?}");
+    }
+
+    /// Render one synthetic RGBA frame on WARP; `None` when no WARP adapter exists.
+    fn warp_frame(
+        p: &RenderProject,
+        (w, h): (u32, u32),
+        screen: [u8; 4],
+        bg: Option<&[u8]>,
+        cam: Option<[u8; 4]>,
+    ) -> Option<Vec<u8>> {
+        let gpu = Gpu::new(true, true).ok()?;
+        let (sw, sh) = p.canvas;
+        let cam_size = cam.map(|_| (16u32, 16u32));
+        let mut c = Compositor::new(gpu, w, h, (sw, sh), 1, cam_size, Readback::Rgba).unwrap();
+        c.upload_screen_rgba(&screen.repeat((sw * sh) as usize));
+        if let Some(col) = cam {
+            c.upload_webcam_rgba(&col.repeat(16 * 16));
+        }
+        c.set_background(bg);
+        let s = scene::build(p, w as f64, h as f64, 0.0, cam.is_some());
+        let mut frames = c.submit(&s, 0, 0.0, [0.0, 0.0, 1.0, 1.0], 0.0).unwrap();
+        frames.extend(c.flush().unwrap());
+        Some(frames.pop().unwrap().1)
+    }
+
+    fn at(f: &[u8], w: u32, x: f64, y: f64) -> [i32; 3] {
+        let o = ((y as u32 * w + x as u32) * 4) as usize;
+        [f[o] as i32, f[o + 1] as i32, f[o + 2] as i32]
+    }
+
+    fn dist(a: [i32; 3], b: [i32; 3]) -> i32 {
+        (0..3).map(|i| (a[i] - b[i]).abs()).max().unwrap()
+    }
+
+    fn plain_project() -> RenderProject {
+        let mut p = RenderProject::empty_for_tests();
+        p.canvas = (64, 36);
+        p.style.shadow = 0.0;
+        p.style.frame = Frame::None;
+        p
+    }
+
+    #[test]
+    fn warp_laptop_frame_draws_bezel_and_keyboard_base() {
+        let (w, h) = (640u32, 360u32);
+        let mut p = plain_project();
+        p.style.frame = Frame::Laptop;
+        let Some(f) = warp_frame(&p, (w, h), [255, 0, 0, 255], None, None) else {
+            return;
+        };
+        // The plain background colour at a pixel (shadow is off in this project).
+        let bgref = |x: f64, y: f64| {
+            let c = crate::math::gradient_color(&p.style.background, w as f64, h as f64, x, y);
+            [
+                (c[0] * 255.0).round() as i32,
+                (c[1] * 255.0).round() as i32,
+                (c[2] * 255.0).round() as i32,
+            ]
+        };
+        let lay = crate::math::layout(w as f64, h as f64, 64.0, 36.0, &p);
+        // Content is the red video.
+        let c = at(
+            &f,
+            w,
+            lay.content.x + lay.content.w / 2.0,
+            lay.content.y + lay.content.h / 2.0,
+        );
+        assert!(c[0] > 245 && c[1] < 10 && c[2] < 10, "{c:?}");
+        // Just outside the content, inside the lid: dark bezel (not red, not background).
+        let bez = at(
+            &f,
+            w,
+            lay.window.x + lay.bezel / 2.0,
+            lay.window.y + lay.window.h / 2.0,
+        );
+        assert!(bez[0] < 60 && bez[1] < 60 && bez[2] < 70, "bezel {bez:?}");
+        // Below the lid, inside the base: a light metal grey, unlike the gradient there.
+        let by = lay.window.y1() + lay.base_h / 2.0;
+        let bx = lay.window.x + lay.window.w / 2.0;
+        let base = at(&f, w, bx, by);
+        assert!(dist(base, bgref(bx, by)) > 12, "base {base:?}");
+        assert!(
+            base[0] > 120 && (base[0] - base[2]).abs() < 40,
+            "base {base:?}"
+        );
+        // The base overhangs the lid but stops there: past it, plain gradient again.
+        let ox = lay.window.x - lay.base_overhang / 2.0;
+        assert!(
+            dist(at(&f, w, ox, by), bgref(ox, by)) > 12,
+            "overhang not drawn"
+        );
+        let away = lay.window.x - lay.base_overhang - 6.0;
+        assert!(dist(at(&f, w, away, by), bgref(away, by)) <= 3);
+    }
+
+    #[test]
+    fn warp_phone_frame_has_bezel_and_camera_pill() {
+        let (w, h) = (360u32, 640u32);
+        let mut p = plain_project();
+        p.style.frame = Frame::Phone;
+        let Some(f) = warp_frame(&p, (w, h), [255, 0, 0, 255], None, None) else {
+            return;
+        };
+        let lay = crate::math::layout(w as f64, h as f64, 64.0, 36.0, &p);
+        let mid = at(
+            &f,
+            w,
+            lay.content.x + lay.content.w / 2.0,
+            lay.content.y + lay.content.h / 2.0,
+        );
+        assert!(mid[0] > 245 && mid[1] < 10, "{mid:?}");
+        let bez = at(
+            &f,
+            w,
+            lay.window.x + lay.bezel / 2.0,
+            lay.window.y + lay.window.h / 2.0,
+        );
+        assert!(bez[0] < 40 && bez[1] < 40 && bez[2] < 50, "bezel {bez:?}");
+        // The camera pill sits at the top centre of the screen, over the video.
+        let pill = at(
+            &f,
+            w,
+            lay.content.x + lay.content.w / 2.0,
+            lay.content.y + 12.0 * lay.unit,
+        );
+        assert!(pill[0] < 60, "pill {pill:?}");
+        // A corner of the window rect is rounded away (shows the gradient, not the bezel).
+        let corner = at(&f, w, lay.window.x + 1.0, lay.window.y + 1.0);
+        assert!(corner[0] > 100, "corner should be background: {corner:?}");
+    }
+
+    #[test]
+    fn warp_webcam_border_is_drawn_inside_the_bubble() {
+        let (w, h) = (320u32, 180u32);
+        let mut p = plain_project();
+        p.style.webcam_enabled = true;
+        p.style.webcam_shape = crate::model::WebcamShape::Square;
+        p.style.webcam_size = 0.4;
+        p.style.webcam_margin = 0.05;
+        p.style.webcam_border_width = 20.0;
+        p.style.webcam_border_color = [1.0, 0.0, 0.0, 1.0];
+        let Some(f) = warp_frame(&p, (w, h), [0, 0, 255, 255], None, Some([0, 255, 0, 255])) else {
+            return;
+        };
+        let s = scene::build(&p, w as f64, h as f64, 0.0, true);
+        let cam = s.webcam.unwrap();
+        // Margin: bubble is 5 % of the height from the right/bottom edge.
+        assert!((w as f64 - cam.rect.x1() - 9.0).abs() < 1e-6);
+        let mid = at(
+            &f,
+            w,
+            cam.rect.x + cam.rect.w / 2.0,
+            cam.rect.y + cam.rect.h / 2.0,
+        );
+        assert!(mid[1] > 240 && mid[0] < 15, "centre is the camera: {mid:?}");
+        let edge = at(
+            &f,
+            w,
+            cam.rect.x + cam.border / 2.0 + 0.5,
+            cam.rect.y + cam.rect.h / 2.0,
+        );
+        assert!(edge[0] > 240 && edge[1] < 15, "border colour: {edge:?}");
+        let just_in = at(
+            &f,
+            w,
+            cam.rect.x + cam.border + 3.0,
+            cam.rect.y + cam.rect.h / 2.0,
+        );
+        assert!(
+            just_in[1] > 240,
+            "camera starts inside the border: {just_in:?}"
+        );
+        // No border -> the camera reaches the edge.
+        p.style.webcam_border_width = 0.0;
+        let f2 = warp_frame(&p, (w, h), [0, 0, 255, 255], None, Some([0, 255, 0, 255])).unwrap();
+        let edge2 = at(&f2, w, cam.rect.x + 1.5, cam.rect.y + cam.rect.h / 2.0);
+        assert!(edge2[1] > 240, "{edge2:?}");
+    }
+
+    #[test]
+    fn warp_background_image_covers_the_gradient_and_letterbox_shows_through() {
+        let (w, h) = (160u32, 90u32);
+        let mut p = plain_project();
+        p.style.padding = 20.0;
+        // Fully blue background over the output.
+        let blue: Vec<u8> = [0u8, 0, 255, 255].repeat((w * h) as usize);
+        let Some(f) = warp_frame(&p, (w, h), [255, 0, 0, 255], Some(&blue), None) else {
+            return;
+        };
+        let c = at(&f, w, 2.0, 2.0);
+        assert!(c[2] > 250 && c[0] < 5, "image covers the gradient: {c:?}");
+        let mid = at(&f, w, w as f64 / 2.0, h as f64 / 2.0);
+        assert!(mid[0] > 250, "video stays on top of the image: {mid:?}");
+        // Left half transparent (premultiplied zeros): the gradient shows there.
+        let mut half = blue.clone();
+        for y in 0..h {
+            for x in 0..w / 2 {
+                let o = ((y * w + x) * 4) as usize;
+                half[o..o + 4].copy_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+        let g = warp_frame(&p, (w, h), [255, 0, 0, 255], Some(&half), None).unwrap();
+        let left = at(&g, w, 2.0, 2.0);
+        let right = at(&g, w, w as f64 - 3.0, 2.0);
+        assert!(
+            left[2] > 200 && left[0] > 120,
+            "gradient in the letterbox: {left:?}"
+        );
+        assert!(
+            right[2] > 250 && right[0] < 5,
+            "image on the right: {right:?}"
+        );
+    }
+
+    // ------------------------------------------------ annotations + webcam effects
+
+    struct Inputs<'a> {
+        screen: Vec<u8>,
+        cam: Option<Vec<u8>>,
+        ann_text: Option<&'a [u8]>,
+        cam_bg: Option<(&'a [u8], u32)>,
+    }
+
+    fn render(p: &RenderProject, (w, h): (u32, u32), i: Inputs) -> Option<Vec<u8>> {
+        let gpu = Gpu::new(true, true).ok()?;
+        let (sw, sh) = p.canvas;
+        let cam_size = i.cam.as_ref().map(|_| (16u32, 16u32));
+        let mut c = Compositor::new(gpu, w, h, (sw, sh), 4, cam_size, Readback::Rgba).unwrap();
+        c.upload_screen_rgba(&i.screen);
+        if let Some(cam) = &i.cam {
+            c.upload_webcam_rgba(cam);
+        }
+        c.set_annotation_text(i.ann_text);
+        c.set_webcam_background(i.cam_bg);
+        let s = scene::build(p, w as f64, h as f64, 100.0, i.cam.is_some());
+        let mut frames = c.submit(&s, 0, 0.0, [0.0, 0.0, 1.0, 1.0], 0.0).unwrap();
+        frames.extend(c.flush().unwrap());
+        Some(frames.pop().unwrap().1)
+    }
+
+    fn grey_screen() -> Vec<u8> {
+        [100u8, 100, 100, 255].repeat(64 * 36)
+    }
+
+    fn stripes_screen() -> Vec<u8> {
+        (0..64 * 36)
+            .flat_map(|i| {
+                let v = if i % 2 == 0 { 0u8 } else { 255 };
+                [v, v, v, 255]
+            })
+            .collect()
+    }
+
+    /// Full-bleed project (no padding / frame / shadow) so the video fills the output.
+    fn full_bleed() -> RenderProject {
+        let mut p = plain_project();
+        p.style.padding = 0.0;
+        p.style.radius = 0.0;
+        p
+    }
+
+    fn ann(kind: crate::model::AnnKind) -> crate::model::Ann {
+        crate::model::Ann {
+            id: "t".into(),
+            kind,
+            start: 0.0,
+            end: 1000.0,
+            x: 0.25,
+            y: 0.25,
+            w: 0.5,
+            h: 0.5,
+            x2: 0.9,
+            y2: 0.5,
+            color: [1.0, 0.0, 0.0],
+            stroke: 40.0,
+            fill: false,
+            text: String::new(),
+            font: 40.0,
+            opacity: 1.0,
+            strength: 1.0,
+            dim: 0.6,
+            radius: 0.0,
+            fade: 0.0,
+        }
+    }
+
+    fn annotated(a: crate::model::Ann) -> Option<Vec<u8>> {
+        let mut p = full_bleed();
+        p.annotations = vec![a];
+        render(
+            &p,
+            (320, 180),
+            Inputs {
+                screen: if matches!(
+                    p.annotations[0].kind,
+                    crate::model::AnnKind::Blur | crate::model::AnnKind::Pixelate
+                ) {
+                    stripes_screen()
+                } else {
+                    grey_screen()
+                },
+                cam: None,
+                ann_text: None,
+                cam_bg: None,
+            },
+        )
+    }
+
+    #[test]
+    fn warp_annotation_rect_ellipse_highlight() {
+        use crate::model::AnnKind as K;
+        let Some(f) = annotated(ann(K::Rect)) else {
+            return;
+        };
+        let w = 320;
+        // Stroke centred on the rect edge x = 80; thick enough to hit a pixel.
+        assert!(
+            at(&f, w, 81.0, 90.0)[0] > 240 && at(&f, w, 81.0, 90.0)[1] < 15,
+            "edge"
+        );
+        assert_eq!(at(&f, w, 160.0, 90.0), [100, 100, 100], "unfilled centre");
+        assert_eq!(at(&f, w, 20.0, 20.0), [100, 100, 100], "outside");
+        let mut a = ann(K::Rect);
+        a.fill = true;
+        let f = annotated(a).unwrap();
+        assert!(at(&f, w, 160.0, 90.0)[0] > 240, "filled centre");
+        assert_eq!(at(&f, w, 20.0, 20.0), [100, 100, 100]);
+        let mut a = ann(K::Ellipse);
+        a.fill = true;
+        let f = annotated(a).unwrap();
+        assert!(at(&f, w, 160.0, 90.0)[0] > 240, "ellipse centre");
+        assert_eq!(
+            at(&f, w, 82.0, 47.0),
+            [100, 100, 100],
+            "ellipse leaves the bbox corner"
+        );
+        let mut a = ann(K::Highlight);
+        a.opacity = 1.0;
+        let f = annotated(a).unwrap();
+        let c = at(&f, w, 160.0, 90.0);
+        assert!(
+            c[0] > 130 && c[0] < 190 && c[1] < 100 && c[1] > 40,
+            "translucent marker {c:?}"
+        );
+        // Opacity scales every drawing kind.
+        let mut a = ann(K::Rect);
+        a.fill = true;
+        a.opacity = 0.5;
+        let c = at(&annotated(a).unwrap(), w, 160.0, 90.0);
+        assert!(c[0] > 160 && c[0] < 190, "half opacity {c:?}");
+    }
+
+    #[test]
+    fn warp_annotation_arrow_has_shaft_and_head() {
+        use crate::model::AnnKind as K;
+        let mut a = ann(K::Arrow);
+        a.x = 0.1;
+        a.y = 0.5;
+        a.x2 = 0.9;
+        a.y2 = 0.5;
+        a.stroke = 24.0;
+        let Some(f) = annotated(a) else {
+            return;
+        };
+        let w = 320;
+        assert!(at(&f, w, 100.0, 90.0)[0] > 240, "shaft");
+        assert_eq!(
+            at(&f, w, 100.0, 50.0),
+            [100, 100, 100],
+            "away from the shaft"
+        );
+        assert!(at(&f, w, 280.0, 90.0)[0] > 240, "head body");
+        // The head is wider than the shaft: a point off-axis near the head base is covered.
+        // Head: 14 px long from the tip at x=288; at x=277 it is ~6 px half-wide,
+        // while the shaft is only 2 px half-wide.
+        assert!(at(&f, w, 277.0, 85.5)[0] > 200, "head flares out");
+        assert_eq!(
+            at(&f, w, 300.0, 90.0),
+            [100, 100, 100],
+            "nothing beyond the tip"
+        );
+        assert_eq!(
+            at(&f, w, 20.0, 90.0),
+            [100, 100, 100],
+            "nothing before the tail"
+        );
+    }
+
+    #[test]
+    fn warp_annotation_spotlight_dims_outside_only() {
+        use crate::model::AnnKind as K;
+        let Some(f) = annotated(ann(K::Spotlight)) else {
+            return;
+        };
+        let w = 320;
+        assert_eq!(at(&f, w, 160.0, 90.0), [100, 100, 100], "inside stays lit");
+        let o = at(&f, w, 20.0, 20.0);
+        assert!((o[0] - 40).abs() <= 2, "outside darkened by dim 0.6: {o:?}");
+    }
+
+    #[test]
+    fn warp_annotation_blur_and_pixelate_sample_the_source() {
+        use crate::model::AnnKind as K;
+        let w = 320;
+        let contrast = |f: &[u8], x: f64, y: f64| {
+            (0..8)
+                .map(|i| at(f, w, x + i as f64, y)[0])
+                .fold((255, 0), |(lo, hi), v| (lo.min(v), hi.max(v)))
+        };
+        let Some(f) = annotated(ann(K::Blur)) else {
+            return;
+        };
+        let (lo, hi) = contrast(&f, 120.0, 90.0);
+        assert!(hi - lo < 90, "blurred inside the rect: {lo}..{hi}");
+        let (lo, hi) = contrast(&f, 10.0, 20.0);
+        assert!(hi - lo > 200, "sharp outside: {lo}..{hi}");
+        let f = annotated(ann(K::Pixelate)).unwrap();
+        let (a, b, c) = (
+            at(&f, w, 81.0, 100.0),
+            at(&f, w, 82.0, 100.0),
+            at(&f, w, 83.0, 100.0),
+        );
+        assert!(
+            a[0].abs_diff(b[0]) <= 3 && b[0].abs_diff(c[0]) <= 3,
+            "one block: {a:?} {b:?} {c:?}"
+        );
+        let (lo, hi) = contrast(&f, 10.0, 20.0);
+        assert!(hi - lo > 200, "sharp outside: {lo}..{hi}");
+        // Different blocks differ or at least the block grid is coarser than the source stripes.
+        let row: Vec<i32> = (80..120).map(|x| at(&f, w, x as f64, 100.0)[0]).collect();
+        let changes = row.windows(2).filter(|p| p[0].abs_diff(p[1]) > 6).count();
+        assert!(
+            changes < 10,
+            "pixelated row changes only at block edges: {changes}"
+        );
+    }
+
+    #[test]
+    fn warp_annotation_text_layer_is_clipped_to_the_screen_content() {
+        let mut p = plain_project();
+        p.style.padding = 20.0;
+        let (w, h) = (320u32, 180u32);
+        // A white square sprite, half of it over the padding (outside the content).
+        let mut layer = vec![0u8; (w * h * 4) as usize];
+        for y in 50..120u32 {
+            for x in 90..160u32 {
+                let o = ((y * w + x) * 4) as usize;
+                layer[o..o + 4].copy_from_slice(&[255, 255, 255, 255]);
+            }
+        }
+        let mut with = full_bleed();
+        with.style.padding = 20.0;
+        with.annotations = vec![ann(crate::model::AnnKind::Text)];
+        let Some(f) = render(
+            &with,
+            (w, h),
+            Inputs {
+                screen: grey_screen(),
+                cam: None,
+                ann_text: Some(&layer),
+                cam_bg: None,
+            },
+        ) else {
+            return;
+        };
+        let lay = crate::math::layout(w as f64, h as f64, 64.0, 36.0, &with);
+        let (cx, cy) = (lay.content.x, lay.content.y);
+        assert!(
+            at(&f, w, cx + 8.0, cy + 8.0)[0] > 250,
+            "sprite inside the content"
+        );
+        assert!(
+            at(&f, w, cx - 6.0, cy + 8.0)[0] < 240,
+            "clipped outside the content"
+        );
+        let _ = p;
+    }
+
+    fn cam_split(left: [u8; 4], right: [u8; 4]) -> Vec<u8> {
+        let mut v = Vec::new();
+        for _y in 0..16 {
+            for x in 0..16 {
+                v.extend(if x < 8 { left } else { right });
+            }
+        }
+        v
+    }
+
+    fn cam_project() -> RenderProject {
+        let mut p = full_bleed();
+        p.style.webcam_enabled = true;
+        p.style.webcam_shape = crate::model::WebcamShape::Square;
+        p.style.webcam_size = 0.5;
+        p.style.webcam_margin = 0.0;
+        p.style.webcam_corner = (true, true);
+        p.style.webcam_shadow = 0.0;
+        p
+    }
+
+    fn cam_render(p: &RenderProject, cam: Vec<u8>, extra: Option<(&[u8], u32)>) -> Vec<u8> {
+        render(
+            p,
+            (320, 180),
+            Inputs {
+                screen: [255u8, 255, 255, 255].repeat(64 * 36),
+                cam: Some(cam),
+                ann_text: None,
+                cam_bg: extra,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn warp_webcam_mirror_and_colour_grading() {
+        let mut p = cam_project();
+        // Bubble is 90x90 at the top-left; left half red, right half blue.
+        let cam = cam_split([255, 0, 0, 255], [0, 0, 255, 255]);
+        if render(
+            &p,
+            (320, 180),
+            Inputs {
+                screen: grey_screen(),
+                cam: Some(cam.clone()),
+                ann_text: None,
+                cam_bg: None,
+            },
+        )
+        .is_none()
+        {
+            return;
+        }
+        let f = cam_render(&p, cam.clone(), None);
+        assert!(at(&f, 320, 20.0, 45.0)[0] > 240 && at(&f, 320, 70.0, 45.0)[2] > 240);
+        p.style.webcam_mirror = true;
+        let f = cam_render(&p, cam.clone(), None);
+        assert!(
+            at(&f, 320, 20.0, 45.0)[2] > 240 && at(&f, 320, 70.0, 45.0)[0] > 240,
+            "mirrored"
+        );
+        p.style.webcam_mirror = false;
+        let grey = vec![[100u8, 100, 100, 255]; 256].concat();
+        p.style.webcam_brightness = 0.2;
+        let b = at(&cam_render(&p, grey.clone(), None), 320, 45.0, 45.0);
+        assert!((b[0] - 151).abs() <= 3, "brightness {b:?}");
+        p.style.webcam_brightness = 0.0;
+        p.style.webcam_contrast = 0.0;
+        let c = at(&cam_render(&p, grey.clone(), None), 320, 45.0, 45.0);
+        assert!((c[0] - 128).abs() <= 3, "contrast 0 -> mid grey {c:?}");
+        p.style.webcam_contrast = 1.0;
+        p.style.webcam_saturation = 0.0;
+        let s = at(&cam_render(&p, cam, None), 320, 20.0, 45.0);
+        assert!(
+            s[0].abs_diff(s[2]) <= 2 && s[0].abs_diff(s[1]) <= 2 && s[0] > 40 && s[0] < 80,
+            "desaturated red {s:?}"
+        );
+    }
+
+    #[test]
+    fn warp_webcam_shadow_strength_is_configurable() {
+        let mut p = cam_project();
+        p.style.webcam_corner = (false, false);
+        p.style.webcam_margin = 0.1;
+        let cam = vec![[0u8, 200, 0, 255]; 256].concat();
+        if render(
+            &p,
+            (320, 180),
+            Inputs {
+                screen: grey_screen(),
+                cam: Some(cam.clone()),
+                ann_text: None,
+                cam_bg: None,
+            },
+        )
+        .is_none()
+        {
+            return;
+        }
+        // Just outside the bubble's left edge.
+        let s = scene::build(&p, 320.0, 180.0, 100.0, true).webcam.unwrap();
+        let (x, y) = (s.rect.x - 3.0, s.rect.y + s.rect.h / 2.0);
+        let none = at(&cam_render(&p, cam.clone(), None), 320, x, y);
+        assert_eq!(none, [255, 255, 255], "no shadow at strength 0");
+        p.style.webcam_shadow = 1.0;
+        let lots = at(&cam_render(&p, cam, None), 320, x, y);
+        assert!(lots[0] < 235, "shadow darkens: {lots:?}");
+    }
+
+    #[test]
+    fn warp_webcam_chroma_key_and_background_replacement() {
+        use crate::model::{Key, WebcamBg};
+        let mut p = cam_project();
+        let cam = cam_split([0, 255, 0, 255], [220, 40, 40, 255]);
+        if render(
+            &p,
+            (320, 180),
+            Inputs {
+                screen: grey_screen(),
+                cam: Some(cam.clone()),
+                ann_text: None,
+                cam_bg: None,
+            },
+        )
+        .is_none()
+        {
+            return;
+        }
+        p.style.webcam_key = Some(Key {
+            color: [0.0, 1.0, 0.0],
+            similarity: 0.4,
+            smoothness: 0.1,
+            spill: 0.0,
+        });
+        // Keyed out, no replacement: the white screen shows through the green half.
+        let f = cam_render(&p, cam.clone(), None);
+        assert_eq!(at(&f, 320, 20.0, 45.0), [255, 255, 255], "green removed");
+        let r = at(&f, 320, 70.0, 45.0);
+        assert!(r[0] > 200 && r[1] < 70, "subject kept: {r:?}");
+        // Solid colour.
+        p.style.webcam_bg = WebcamBg::Color([0.0, 0.0, 1.0, 1.0]);
+        let f = cam_render(&p, cam.clone(), None);
+        let b = at(&f, 320, 20.0, 45.0);
+        assert!(
+            b[2] > 240 && b[0] < 15 && b[1] < 15,
+            "blue replacement {b:?}"
+        );
+        assert!(at(&f, 320, 70.0, 45.0)[0] > 200, "subject unchanged");
+        // Gradient (top -> bottom, red -> yellow at 180deg).
+        p.style.webcam_bg = WebcamBg::Gradient(crate::model::Gradient {
+            angle_deg: 180.0,
+            stops: vec![[1.0, 0.0, 0.0, 1.0], [1.0, 1.0, 0.0, 1.0]],
+        });
+        let f = cam_render(&p, cam.clone(), None);
+        let (top, bot) = (at(&f, 320, 20.0, 4.0), at(&f, 320, 20.0, 86.0));
+        assert!(top[0] > 240 && top[1] < 40, "gradient start {top:?}");
+        assert!(bot[0] > 240 && bot[1] > 200, "gradient end {bot:?}");
+        // Image: a magenta square.
+        let magenta: Vec<u8> = [255u8, 0, 255, 255].repeat(16);
+        p.style.webcam_bg = WebcamBg::Image("x.png".into());
+        let f = cam_render(&p, cam.clone(), Some((&magenta, 4)));
+        let m = at(&f, 320, 20.0, 45.0);
+        assert!(
+            m[0] > 240 && m[2] > 240 && m[1] < 15,
+            "image replacement {m:?}"
+        );
+        // Blur: the keyed-out region shows a blurred, desaturated camera frame.
+        p.style.webcam_bg = WebcamBg::Blur(0.5);
+        let f = cam_render(&p, cam, None);
+        let g = at(&f, 320, 20.0, 45.0);
+        assert!(
+            g[0].abs_diff(g[1]) <= 6 && g[1].abs_diff(g[2]) <= 6 && g[1] > 120 && g[1] < 230,
+            "blurred grey {g:?}"
+        );
+    }
+
+    #[test]
+    fn shared_device_is_reused_and_replaced_after_an_error() {
+        let Ok(a) = Gpu::shared(true, true) else {
+            eprintln!("no WARP adapter; skipped");
+            return;
+        };
+        let started = std::time::Instant::now();
+        let b = Gpu::shared(true, true).unwrap();
+        assert!(a.same_device(&b), "second call reuses the cached device");
+        assert!(started.elapsed().as_millis() < 50, "cache hit is instant");
+        // Pipelines are built once and shared too.
+        assert!(std::ptr::eq(a.pipelines(), b.pipelines()));
+        // A recorded GPU error poisons the device: the next caller gets a fresh one.
+        a.record_error("device lost".into());
+        let c = Gpu::shared(true, true).unwrap();
+        assert!(!c.same_device(&a));
+        assert!(c.errors_ok());
+        // Different adapter policy (hardware allowed vs forced WARP) never mixes.
+        assert!(Gpu::new(true, true).unwrap().software);
     }
 }

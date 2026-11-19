@@ -66,19 +66,14 @@ Using a fixed-version runtime bundled inside Frostcap is not planned.
 
 ## Name and logo
 
-The Frostcap name and the logo in `assets/brand/` are part of the repository, and the
-repository's MIT license grants rights in "the Software". Whether the logo artwork is meant to
-be MIT-licensed like the code, and whether the project wants to reserve the name and logo as
-trademarks (for example to stop forks from presenting themselves as official Frostcap), has
-**not been decided**.
+**Decision (maintainer, may be revised):** the Frostcap name and the logo in `assets/brand/`
+are released under the same MIT license as the code. The project makes no separate trademark
+claim and has no trademark policy; forks may reuse the logo. If the maintainer later decides to
+reserve the name and logo (for example to ask forks to rename), this section and the README
+must be updated together, and a change would apply only to future releases.
 
-> **Maintainer decision needed.** Options include: (a) leave everything under MIT and accept
-> that forks may reuse the logo; (b) add a short trademark policy that keeps the code MIT but
-> asks forks to rename and replace the logo (common in open-source projects); (c) license the
-> artwork separately (for example CC BY 4.0) with a trademark note. Also confirm that the
-> logo artwork (`logo-source.webp`) was created by or for the project and that the
-> project has the right to license it. Until then, the README and this file make no
-> trademark claim.
+The maintainer should still confirm that the logo artwork (`logo-source.webp`) was created by
+or for the project and that the project has the right to license it.
 
 Third-party names (Windows, Microsoft Edge, WebView2, H.264 and others) are trademarks of
 their owners and are used only to describe compatibility. Frostcap is not affiliated with or

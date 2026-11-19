@@ -6,6 +6,7 @@
  * preview only and does not decode real video.
  */
 import type { Easing, Project, ZoomSegment } from "../types";
+import { drawAnnotations, drawWebcam } from "./overlay";
 import { cursorAt } from "../store/editor";
 
 const SRC_W = 1600;
@@ -153,14 +154,27 @@ export function zoomAt(segs: ZoomSegment[], t: number): { seg: ZoomSegment | nul
   return { seg: null, e: 0 };
 }
 
+/** Title bar above the screen: none for "none" and the device frames (laptop / phone bring their own bezel). */
+export function titleBarHeight(frame: Project["style"]["frame"], unit: number): number {
+  return frame === "none" || frame === "laptop" || frame === "phone" ? 0 : frame === "minimal" ? 22 * unit : 34 * unit;
+}
+
+/** Room a device frame needs around the screen (bezel, laptop base) so it is never clipped at the canvas edge. */
+export function frameInsets(frame: Project["style"]["frame"], unit: number): { x: number; y: number } {
+  if (frame === "laptop") return { x: 60 * unit, y: 30 * unit };
+  if (frame === "phone") return { x: 22 * unit, y: 22 * unit };
+  return { x: 0, y: 0 };
+}
+
 /** Content (captured screen) rect in unzoomed canvas space — used for click-to-focus. */
 export function contentRect(W: number, H: number, p: Project) {
   const st = p.style;
   const unit = H / 1080;
   const pad = (st.padding / 100) * Math.min(W, H * 1.78);
-  const barH = st.frame === "none" ? 0 : st.frame === "minimal" ? 22 * unit : 34 * unit;
-  const availW = W - pad * 2;
-  const availH = H - pad * 2;
+  const barH = titleBarHeight(st.frame, unit);
+  const ins = frameInsets(st.frame, unit);
+  const availW = W - pad * 2 - ins.x * 2;
+  const availH = H - pad * 2 - ins.y * 2;
   const srcAspect = p.media.width / p.media.height;
   let cw = availW;
   let ch = cw / srcAspect;
@@ -196,6 +210,15 @@ export function canvasToContent(px: number, py: number, W: number, H: number, p:
   return { x: c01((wx - cr.x) / cr.w), y: c01((wy - cr.y) / cr.h) };
 }
 
+/** Forward map: normalized content point -> canvas pixel (through the layout and the current zoom). */
+export function contentToCanvas(x: number, y: number, W: number, H: number, p: Project, t: number): { x: number; y: number } {
+  const cr = contentRect(W, H, p);
+  const xf = zoomTransform(W, H, p, t);
+  const wx = cr.x + x * cr.w;
+  const wy = cr.y + y * cr.h;
+  return xf ? { x: (wx - xf.tx) * xf.S + W / 2, y: (wy - xf.ty) * xf.S + H / 2 } : { x: wx, y: wy };
+}
+
 /** Export semantics: smoothing applies only while the switch is on; hidden or baked cursors are never drawn. */
 export function effectiveCursor(p: Project): { draw: boolean; smoothing: number } {
   const c = p.style.cursor;
@@ -221,6 +244,8 @@ export interface RenderOpts {
   frame?: CanvasImageSource | null;
   /** Real webcam frame (webcam.mp4). */
   webcamFrame?: CanvasImageSource | null;
+  /** Loaded project images: the framed-screen background and the webcam background replacement. */
+  images?: { background?: CanvasImageSource | null; webcamBackground?: CanvasImageSource | null };
 }
 
 export function renderFrame(ctx: CanvasRenderingContext2D, W: number, H: number, p: Project, t: number, opts: RenderOpts = {}) {
@@ -238,12 +263,23 @@ export function renderFrame(ctx: CanvasRenderingContext2D, W: number, H: number,
   st.background.stops.forEach((c, i, a) => bg.addColorStop(a.length === 1 ? 0 : i / (a.length - 1), c));
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
+  if (st.backgroundImage && opts.images?.background) {
+    const img = opts.images.background as CanvasImageSource & { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number };
+    const iw = img.naturalWidth || (img.width as number) || 1;
+    const ih = img.naturalHeight || (img.height as number) || 1;
+    const k = st.backgroundImage.fit === "contain" ? Math.min(W / iw, H / ih) : Math.max(W / iw, H / ih);
+    ctx.save();
+    if (st.backgroundImage.blur > 0) ctx.filter = `blur(${st.backgroundImage.blur * unit}px)`;
+    ctx.drawImage(img, (W - iw * k) / 2, (H - ih * k) / 2, iw * k, ih * k);
+    ctx.restore();
+  }
 
   // 2. Content rect (fit source aspect inside padded area)
   const pad = (st.padding / 100) * Math.min(W, H * 1.78);
-  const barH = st.frame === "none" ? 0 : st.frame === "minimal" ? 22 * unit : 34 * unit;
-  const availW = W - pad * 2;
-  const availH = H - pad * 2;
+  const barH = titleBarHeight(st.frame, unit);
+  const ins = frameInsets(st.frame, unit);
+  const availW = W - pad * 2 - ins.x * 2;
+  const availH = H - pad * 2 - ins.y * 2;
   const srcAspect = p.media.width / p.media.height;
   let cw = availW;
   let ch = cw / srcAspect;
@@ -273,6 +309,29 @@ export function renderFrame(ctx: CanvasRenderingContext2D, W: number, H: number,
     rr(ctx, rx, ry, cw, ch + barH, radius);
     ctx.fillStyle = "#11141c";
     ctx.fill();
+    ctx.restore();
+  }
+  if (st.frame === "laptop" || st.frame === "phone") {
+    ctx.save();
+    ctx.fillStyle = "#0b0d14";
+    if (st.frame === "laptop") {
+      const b = 14 * unit;
+      rr(ctx, rx - b, ry - b, cw + b * 2, ch + b * 2, 16 * unit);
+      ctx.fill();
+      ctx.fillStyle = "#2a2f3d";
+      rr(ctx, rx - b - 46 * unit, ry + ch + b, cw + b * 2 + 92 * unit, 16 * unit, 8 * unit);
+      ctx.fill();
+      ctx.fillStyle = "#171a24";
+      rr(ctx, rx + cw / 2 - 60 * unit, ry + ch + b, 120 * unit, 6 * unit, 3 * unit);
+      ctx.fill();
+    } else {
+      const b = 22 * unit;
+      rr(ctx, rx - b, ry - b, cw + b * 2, ch + b * 2, 44 * unit);
+      ctx.fill();
+      ctx.fillStyle = "#1c2030";
+      rr(ctx, rx + cw / 2 - 40 * unit, ry - b / 2 - 5 * unit, 80 * unit, 10 * unit, 5 * unit);
+      ctx.fill();
+    }
     ctx.restore();
   }
   ctx.save();
@@ -324,6 +383,9 @@ export function renderFrame(ctx: CanvasRenderingContext2D, W: number, H: number,
     ctx.restore();
   }
 
+  // 4b. Annotations: in screen-content space (they follow the zoom), under the cursor, webcam and captions
+  if (p.annotations?.length) drawAnnotations(ctx, p.annotations, t, { x: rx, y: ry + barH, w: cw, h: ch }, unit, xf?.S ?? 1, opts.frame ?? fauxScreen());
+
   // 5. Clicks + cursor (in content space, so they zoom with the screen)
   const toCanvas = (x: number, y: number) => [rx + x * cw, ry + barH + y * ch] as const;
   if (st.cursor.clickRipple) {
@@ -372,44 +434,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, W: number, H: number,
   ctx.restore();
 
   // 6. Webcam (unzoomed overlay)
-  if (webcamVisible(p)) {
-    const sz = st.webcam.size * H;
-    const m = 28 * unit;
-    const left = st.webcam.position.endsWith("left");
-    const top = st.webcam.position.startsWith("top");
-    const wx = left ? m : W - m - sz;
-    const wy = top ? m : H - m - sz;
-    ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0.4)";
-    ctx.shadowBlur = 24 * unit;
-    ctx.beginPath();
-    if (st.webcam.shape === "circle") ctx.arc(wx + sz / 2, wy + sz / 2, sz / 2, 0, Math.PI * 2);
-    else ctx.roundRect(wx, wy, sz, sz, st.webcam.shape === "rounded" ? sz * 0.22 : 6 * unit);
-    const wg = ctx.createLinearGradient(wx, wy, wx + sz, wy + sz);
-    wg.addColorStop(0, "#3b4a6b");
-    wg.addColorStop(1, "#1b2236");
-    ctx.fillStyle = wg;
-    ctx.fill();
-    ctx.shadowColor = "transparent";
-    ctx.clip();
-    const cam = opts.webcamFrame as (CanvasImageSource & { videoWidth?: number; videoHeight?: number }) | null | undefined;
-    if (cam) {
-      // cover-fit the camera frame into the square
-      const vw = cam.videoWidth || sz;
-      const vh = cam.videoHeight || sz;
-      const k = Math.max(sz / vw, sz / vh);
-      ctx.drawImage(cam, wx + (sz - vw * k) / 2, wy + (sz - vh * k) / 2, vw * k, vh * k);
-    } else {
-      ctx.fillStyle = "#8fa3c8";
-      ctx.beginPath();
-      ctx.arc(wx + sz / 2, wy + sz * 0.42, sz * 0.17, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(wx + sz / 2, wy + sz * 0.95, sz * 0.32, sz * 0.28, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-  }
+  if (webcamVisible(p)) drawWebcam(ctx, W, H, st.webcam, opts.webcamFrame, { background: opts.images?.webcamBackground });
 
   // 6b. Keystroke overlay
   drawKeys(ctx, W, H, p, t);

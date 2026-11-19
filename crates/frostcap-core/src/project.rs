@@ -16,6 +16,8 @@ pub use frostcap_project::{
     VideoTrack, WEBCAM_FILE, WebcamShape, WebcamStyle, WindowFrame, ZoomSegment, limits,
     project_dir_of, read_meta,
 };
+pub use frostcap_project::{BackgroundImage, background_path};
+pub use frostcap_project::{import_background, import_background_file};
 
 /// Write `bytes` to `file` via a sibling temp file + rename (+ fsync).
 pub fn write_atomic(file: &std::path::Path, bytes: &[u8]) -> crate::Result<()> {
@@ -86,6 +88,7 @@ pub mod samples {
             shape: WebcamShape::Rounded,
             size: 0.25,
             position: Corner::TopRight,
+            ..WebcamStyle::default()
         };
         s.audio = AudioStyle {
             noise_gate: true,

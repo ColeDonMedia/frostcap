@@ -2,14 +2,18 @@ import { create } from "zustand";
 import { describeIssue, toBackendError } from "../backend";
 import type { Issue } from "../types";
 import type { WireKeyCapture } from "../contract";
+import { LOCALES, setLocale, systemLocale, type Locale } from "../i18n";
 
 export type View = "recorder" | "editor" | "settings";
 export type ThemePref = "system" | "dark" | "light";
 export type TransparencyPref = "auto" | "glass" | "solid";
+/** UI language: follow the OS (navigator.language) or force one locale. */
+export type Language = "system" | Locale;
 
 export interface Settings {
   theme: ThemePref;
   transparency: TransparencyPref;
+  language: Language;
   outputFolder: string;
   fps: number;
   webcam: boolean;
@@ -32,6 +36,7 @@ export interface Settings {
 const DEFAULTS: Settings = {
   theme: "system",
   transparency: "auto",
+  language: "system",
   /** Empty = the backend default (default_output_dir). */
   outputFolder: "",
   fps: 60,
@@ -52,9 +57,12 @@ function migrate(saved: Record<string, unknown>): Settings {
   const { captureKeys: _old, ...rest } = saved;
   void _old;
   const s = { ...DEFAULTS, ...rest } as Settings;
+  if (s.language !== "system" && !LOCALES.some((l) => l.id === s.language)) s.language = "system";
   if (typeof s.outputFolder !== "string" || s.outputFolder.includes("%")) s.outputFolder = "";
   return s;
 }
+
+const applyLanguage = (l: Language) => void setLocale(l === "system" ? systemLocale() : l);
 
 function load(): Settings {
   try {
@@ -99,6 +107,9 @@ const ACTION_MIN_MS = 10_000;
 let toastSeq = 0;
 const timers = new Map<number, { handle: ReturnType<typeof setTimeout> | null; remaining: number; started: number }>();
 
+const loaded = load();
+applyLanguage(loaded.language);
+
 export const useApp = create<AppState>((set, get) => {
   const arm = (id: number) => {
     const t = timers.get(id);
@@ -109,12 +120,13 @@ export const useApp = create<AppState>((set, get) => {
   return {
     view: "recorder",
     projectPath: null,
-    settings: load(),
+    settings: loaded,
     setView: (view) => set({ view }),
     openProject: (projectPath) => set({ projectPath, view: "editor" }),
     setSetting: (k, v) => {
       const settings = { ...get().settings, [k]: v };
       set({ settings });
+      if (k === "language") applyLanguage(v as Language);
       try {
         localStorage.setItem(KEY, JSON.stringify(settings));
       } catch {

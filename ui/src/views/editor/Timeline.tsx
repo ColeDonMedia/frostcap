@@ -1,10 +1,16 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as RPointerEvent } from "react";
-import { Magnet, Minus, Plus, Scissors, ZoomIn, Trash2, Film, MousePointerClick, AudioLines, Maximize2 } from "lucide-react";
+import { Magnet, Minus, Plus, Scissors, ZoomIn, Trash2, Film, MousePointerClick, AudioLines, Maximize2, Shapes, Gauge, Check } from "lucide-react";
 import { useEditor } from "../../store/editor";
 import { demoPeaks, loadPeaks } from "../../lib/media";
 import type { Peaks } from "../../lib/wav";
 import type { Project } from "../../types";
 import { clamp, fmtTime } from "../../lib/format";
+import { t } from "../../i18n";
+import { AnnotationTrack, SpeedTrack } from "./RangeTracks";
+import { outputDuration } from "../../store/editor";
+import { backend } from "../../backend";
+import { WandSparkles, X } from "lucide-react";
+import { useApp } from "../../store/app";
 
 const SNAP_PX = 8;
 const MIN_ZOOM_MS = 300;
@@ -52,6 +58,23 @@ export function Timeline() {
   const contentRef = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
   const [snapLine, setSnapLine] = useState<number | null>(null);
+  const proposals = useEditor((s) => s.proposals);
+  const [suggesting, setSuggesting] = useState(false);
+  /** Asks the backend for idle stretches; they are only proposals until the user accepts them. */
+  const suggest = async () => {
+    const path = ed().path;
+    if (!path || suggesting) return;
+    setSuggesting(true);
+    try {
+      const ranges = await backend.suggestCuts(path, { rmsThresholdDb: -45, minIdleMs: 1500, marginMs: 200, cursorMinPx: 3 });
+      ed().setProposals(ranges);
+      if (!ranges.length) useApp.getState().showToast(t("timeline.suggestNone"));
+    } catch (e) {
+      useApp.getState().reportIssue(e, t("timeline.suggestErr"));
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   const dur = project.media.durationMs;
   const msToPx = (ms: number) => (ms / 1000) * pps;
@@ -277,68 +300,102 @@ export function Timeline() {
   const downClicks = useMemo(() => project.clicks.filter((c) => c.state === "down"), [project.clicks]);
 
   return (
-    <section className="timeline glass" aria-label="Timeline">
-      <div className="timeline__head" role="toolbar" aria-label="Timeline tools">
-        <button type="button" className="iconbtn" aria-label="Split at playhead" title="Split (S)" onClick={() => ed().splitAtPlayhead()}>
+    <section className="timeline glass" aria-label={t("timeline.region")}>
+      <div className="timeline__head" role="toolbar" aria-label={t("timeline.tools")}>
+        <button type="button" className="iconbtn" aria-label={t("timeline.split")} title={t("timeline.splitTitle")} onClick={() => ed().splitAtPlayhead()}>
           <Scissors size={16} />
         </button>
-        <button type="button" className="iconbtn" aria-label="Add zoom at playhead" title="Add zoom (Z)" onClick={() => ed().addZoomAtPlayhead()}>
+        <button type="button" className="iconbtn" aria-label={t("timeline.addZoom")} title={t("timeline.addZoomTitle")} onClick={() => ed().addZoomAtPlayhead()}>
           <ZoomIn size={16} />
         </button>
-        <button type="button" className="iconbtn" aria-label="Delete selection" title="Delete (Del)" disabled={!selection} onClick={() => ed().deleteSelection()}>
+        <button type="button" className="iconbtn" aria-label={t("timeline.delete")} title={t("timeline.deleteTitle")} disabled={!selection} onClick={() => ed().deleteSelection()}>
           <Trash2 size={16} />
         </button>
         <span className="toolbar__sep" aria-hidden="true" />
-        <button type="button" className="iconbtn" aria-label="Snapping" aria-pressed={snap} title="Snap (hold Alt to bypass)" onClick={() => ed().setSnap(!snap)}>
+        <button type="button" className="iconbtn" aria-label={t("timeline.snap")} aria-pressed={snap} title={t("timeline.snapTitle")} onClick={() => ed().setSnap(!snap)}>
           <Magnet size={16} />
         </button>
-        <span className="field__hint timeline__hint" style={{ marginLeft: 6 }}>
-          {selectedZoom ? "Zoom selected (click preview: focus)" : selection?.kind === "clip" ? "Clip selected" : `${project.clips.length} clip${project.clips.length > 1 ? "s" : ""} · ${project.zoomSegments.length} zooms`}
-        </span>
+        {!proposals && (
+          <span className="field__hint timeline__hint" style={{ marginLeft: 6 }}>
+            {selectedZoom ? t("timeline.zoomSelected") : selection?.kind === "clip" ? t("timeline.clipSelected") : t("timeline.summary", { clips: t("timeline.clips", { count: project.clips.length }), zooms: t("timeline.zooms", { count: project.zoomSegments.length }) })}
+          </span>
+          )}
+        {proposals && (
+          <span className="timeline__proposals" role="status">
+            <span className="field__hint" title={t("timeline.suggestCount", { count: proposals.length })}>
+              {t("timeline.suggestCountShort", { count: proposals.length })}
+            </span>
+            <button type="button" className="btn btn--sm btn--primary" data-testid="accept-all-cuts" onClick={() => ed().acceptAllProposals()}>
+              {t("timeline.acceptAllN", { count: proposals.length })}
+            </button>
+            <button type="button" className="btn btn--sm" onClick={() => ed().dismissProposals()}>
+              {t("timeline.dismissAll")}
+            </button>
+          </span>
+        )}
+        {project.speed.length > 0 && (
+          <span className="field__hint" style={{ marginLeft: 8 }} data-testid="output-length">
+            {t("timeline.outputLength", { time: fmtTime(outputDuration(project)) })}
+          </span>
+        )}
         <span className="spacer" />
-        <button type="button" className="iconbtn" aria-label="Zoom timeline out" onClick={() => ed().setPxPerSec(pps / 1.4)}>
-          <Minus size={16} />
+        <button type="button" className="btn btn--sm btn--ghost" data-testid="suggest-cuts" aria-busy={suggesting} disabled={suggesting} title={project.media.mic || project.media.systemAudio ? t("timeline.suggestTitle") : t("timeline.suggestCursorOnly")} onClick={() => void suggest()}>
+          {suggesting ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} aria-hidden="true" /> : <WandSparkles size={14} aria-hidden="true" />} {t("timeline.suggest")}
         </button>
-        <input
-          className="range timeline__zoom"
-          type="range"
-          aria-label="Timeline zoom"
-          min={Math.log(8)}
-          max={Math.log(400)}
-          step={0.01}
-          value={Math.log(pps)}
-          style={{ ["--p" as string]: `${((Math.log(pps) - Math.log(8)) / (Math.log(400) - Math.log(8))) * 100}%` }}
-          onChange={(e) => ed().setPxPerSec(Math.exp(Number(e.target.value)))}
-        />
-        <button type="button" className="iconbtn" aria-label="Zoom timeline in" onClick={() => ed().setPxPerSec(pps * 1.4)}>
-          <Plus size={16} />
+        <button type="button" className="iconbtn" aria-label={t("timeline.addSpeed")} title={t("timeline.addSpeed")} onClick={() => ed().addSpeedAtPlayhead(2)}>
+          <Gauge size={16} />
         </button>
-        <button
-          type="button"
-          className="iconbtn"
-          aria-label="Fit timeline"
-          title="Fit"
-          onClick={() => {
-            const el = scrollRef.current;
-            if (el) ed().setPxPerSec((el.clientWidth - 40) / (dur / 1000));
-          }}
-        >
-          <Maximize2 size={15} />
-        </button>
+        <div className="timeline__zoomgroup" role="group" aria-label={t("timeline.zoomSlider")}>
+          <button type="button" className="iconbtn" aria-label={t("timeline.zoomOut")} onClick={() => ed().setPxPerSec(pps / 1.4)}>
+            <Minus size={16} />
+          </button>
+          <input
+            className="range timeline__zoom"
+            type="range"
+            aria-label={t("timeline.zoomSlider")}
+            min={Math.log(8)}
+            max={Math.log(400)}
+            step={0.01}
+            value={Math.log(pps)}
+            style={{ ["--p" as string]: `${((Math.log(pps) - Math.log(8)) / (Math.log(400) - Math.log(8))) * 100}%` }}
+            onChange={(e) => ed().setPxPerSec(Math.exp(Number(e.target.value)))}
+          />
+          <button type="button" className="iconbtn" aria-label={t("timeline.zoomIn")} onClick={() => ed().setPxPerSec(pps * 1.4)}>
+            <Plus size={16} />
+          </button>
+          <button
+            type="button"
+            className="iconbtn"
+            aria-label={t("timeline.fit")}
+            title={t("timeline.fitTitle")}
+            onClick={() => {
+              const el = scrollRef.current;
+              if (el) ed().setPxPerSec((el.clientWidth - 40) / (dur / 1000));
+            }}
+          >
+            <Maximize2 size={15} />
+          </button>
+          </div>
       </div>
       <div className="timeline__body">
         <div className="timeline__labels" aria-hidden="true">
           <div className="tracklabel">
-            <Film size={14} /> Video
+            <Film size={14} /> {t("timeline.trackVideo")}
           </div>
           <div className="tracklabel">
-            <ZoomIn size={14} /> Zoom
+            <ZoomIn size={14} /> {t("timeline.trackZoom")}
           </div>
           <div className="tracklabel tracklabel--sm">
-            <MousePointerClick size={14} /> Input
+            <Shapes size={14} /> {t("timeline.trackNotes")}
+          </div>
+          <div className="tracklabel tracklabel--sm">
+            <Gauge size={14} /> {t("timeline.trackSpeed")}
+          </div>
+          <div className="tracklabel tracklabel--sm">
+            <MousePointerClick size={14} /> {t("timeline.trackInput")}
           </div>
           <div className="tracklabel">
-            <AudioLines size={14} /> Audio
+            <AudioLines size={14} /> {t("timeline.audio")}
           </div>
         </div>
         <div className="timeline__scroll scroll" ref={scrollRef}>
@@ -359,7 +416,32 @@ export function Timeline() {
             </div>
 
             {/* Video track */}
-            <div className="track" onPointerDown={(e) => { startDrag(e, { kind: "scrub" }); ed().select(null); }} role="group" aria-label="Video clips">
+            <div className="track" onPointerDown={(e) => { startDrag(e, { kind: "scrub" }); ed().select(null); }} role="group" aria-label={t("timeline.videoClips")}>
+              {(proposals ?? []).map((r) => {
+                const from = fmtTime(r.startMs);
+                const to = fmtTime(r.endMs);
+                return (
+                  <div
+                    key={r.startMs}
+                    className="cutprop"
+                    data-testid="cut-proposal"
+                    role="group"
+                    aria-label={t("timeline.proposal", { start: from, end: to })}
+                    title={t("timeline.proposalTip", { duration: ((r.endMs - r.startMs) / 1000).toFixed(1) })}
+                    style={{ left: msToPx(r.startMs), width: Math.max(8, msToPx(r.endMs - r.startMs)) }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    <span className="cutprop__chip">
+                      <button type="button" className="cutprop__ok" aria-label={t("timeline.acceptCut", { start: from, end: to })} onClick={() => ed().acceptProposal(r.startMs)}>
+                        <Check size={14} aria-hidden="true" />
+                      </button>
+                      <button type="button" className="cutprop__no" data-testid="reject-cut" aria-label={t("timeline.rejectCut", { start: from, end: to })} onClick={() => ed().rejectProposal(r.startMs)}>
+                        <X size={14} aria-hidden="true" />
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
               {gaps.map((g, i) => (
                 <div key={i} className="gap" style={{ left: msToPx(g.start), width: msToPx(g.end - g.start) }} />
               ))}
@@ -372,7 +454,7 @@ export function Timeline() {
                     role="button"
                     aria-pressed={sel}
                     tabIndex={0}
-                    aria-label={`Clip ${i + 1}, ${fmtTime(c.start)} to ${fmtTime(c.end)}`}
+                    aria-label={t("timeline.clipLabel", { n: i + 1, start: fmtTime(c.start), end: fmtTime(c.end) })}
                     style={{ left: msToPx(c.start), width: Math.max(4, msToPx(c.end - c.start)) }}
                     onPointerDown={(e) => {
                       ed().select({ kind: "clip", id: c.id });
@@ -381,14 +463,14 @@ export function Timeline() {
                     onFocus={() => ed().select({ kind: "clip", id: c.id })}
                   >
                     <div className="clip__frames" />
-                    <span className="clip__label">Clip {i + 1}</span>
+                    <span className="clip__label">{t("timeline.clip", { n: i + 1 })}</span>
                   </div>
                     <div
                       className="handle handle--l handle--clip"
                       style={{ left: msToPx(c.start) }}
                       role="slider"
                       tabIndex={0}
-                      aria-label={`Trim start of clip ${i + 1}`}
+                      aria-label={t("timeline.trimStart", { n: i + 1 })}
                       aria-valuemin={0}
                       aria-valuemax={dur}
                       aria-valuenow={c.start}
@@ -404,7 +486,7 @@ export function Timeline() {
                       style={{ left: msToPx(c.end) - 10 }}
                       role="slider"
                       tabIndex={0}
-                      aria-label={`Trim end of clip ${i + 1}`}
+                      aria-label={t("timeline.trimEnd", { n: i + 1 })}
                       aria-valuemin={0}
                       aria-valuemax={dur}
                       aria-valuenow={c.end}
@@ -424,7 +506,7 @@ export function Timeline() {
             <div
               className="track"
               role="group"
-              aria-label="Zoom segments. Double-click empty space to add."
+              aria-label={t("timeline.zoomTrack")}
               onPointerDown={(e) => {
                 startDrag(e, { kind: "scrub" });
                 ed().select(null);
@@ -444,7 +526,7 @@ export function Timeline() {
                     role="button"
                     tabIndex={0}
                     aria-pressed={sel}
-                    aria-label={`Zoom ${z.scale.toFixed(1)}x from ${fmtTime(z.start)} to ${fmtTime(z.end)}. Arrow keys move, Alt+arrows resize.`}
+                    aria-label={t("timeline.zoomSeg", { scale: z.scale.toFixed(1), start: fmtTime(z.start), end: fmtTime(z.end) })}
                     style={{ left: msToPx(z.start), width: Math.max(6, w) }}
                     onPointerDown={(e) => {
                       ed().select({ kind: "zoom", id: z.id });
@@ -464,7 +546,7 @@ export function Timeline() {
                     />
                     {w > 50 && (
                       <span>
-                        {z.scale.toFixed(1)}×{z.auto && w > 90 ? " · auto" : ""}
+                        {z.scale.toFixed(1)}×{z.auto && w > 90 ? t("timeline.auto") : ""}
                       </span>
                     )}
                     <div
@@ -480,8 +562,12 @@ export function Timeline() {
               })}
             </div>
 
+            {/* Annotations and speed regions */}
+            <AnnotationTrack pps={pps} dur={dur} />
+            <SpeedTrack pps={pps} dur={dur} />
+
             {/* Clicks / keys */}
-            <div className="track track--sm" aria-label={`${downClicks.length} clicks, ${project.keys.length} key presses`} role="img">
+            <div className="track track--sm" aria-label={t("timeline.inputs", { clicks: downClicks.length, count: project.keys.length })} role="img">
               {downClicks.map((c, i) => (
                 <span key={i} className={`marker${c.button === "right" ? " marker--right" : ""}`} style={{ left: msToPx(c.t) }} />
               ))}
@@ -498,9 +584,9 @@ export function Timeline() {
             <div
               className="track"
               role="img"
-              aria-label={!audioTrack ? "No audio track" : wavePeaks?.real ? "Audio waveform" : "Audio waveform (demo data)"}
+              aria-label={!audioTrack ? t("timeline.noAudio") : wavePeaks?.real ? t("timeline.wave") : t("timeline.waveDemo")}
             >
-              {!audioTrack && <span className="track__empty">No audio recorded</span>}
+              {!audioTrack && <span className="track__empty">{t("timeline.noAudioRecorded")}</span>}
               <svg className="wave" width={width} height={32} viewBox={`0 0 ${width} 24`} preserveAspectRatio="none" aria-hidden="true">
                 <path d={wave} stroke="var(--accent-line)" strokeWidth="1.6" strokeLinecap="round" opacity="0.75" />
               </svg>
@@ -513,7 +599,7 @@ export function Timeline() {
                 onPointerDown={(e) => startDrag(e, { kind: "scrub" })}
                 role="slider"
                 tabIndex={0}
-                aria-label="Playhead"
+                aria-label={t("timeline.playhead")}
                 aria-valuemin={0}
                 aria-valuemax={dur}
                 aria-valuenow={Math.round(playhead)}

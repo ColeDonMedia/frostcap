@@ -1,0 +1,13 @@
+{
+  "args": {
+    "projectPath": "C:\\Users\\me\\Videos\\Frostcap\\Recording 2026-11-17 14.03.31.frostcap",
+    "sourcePath": "C:\\Users\\me\\Pictures\\wallpaper.png"
+  },
+  "error": {
+    "code": "invalid_path",
+    "message": "invalid path: choose the image with the file dialog first"
+  },
+  "response": {
+    "file": "background-0123456789abcdef.png"
+  }
+}

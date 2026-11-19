@@ -37,11 +37,12 @@ elsewhere.
 
 ## Reporting and enforcement
 
-Report problems privately to the maintainers. Until a dedicated address is published here,
-use GitHub's private vulnerability reporting form (see [SECURITY.md](SECURITY.md)) or contact
-a maintainer directly, and say it is a conduct report. Reports are kept confidential.
-
-<!-- Maintainer: add a contact address, e.g. conduct@<your-domain>. -->
+Report problems privately to the maintainer, [@ColeDonMedia](https://github.com/ColeDonMedia),
+through GitHub. Use the repository's private reporting form
+(<https://github.com/ColeDonMedia/frostcap/security/advisories/new>, see
+[SECURITY.md](SECURITY.md)), say that it is a conduct report, and do not post it publicly.
+If the report is about the maintainer, say so in the form and ask for another person to review
+it. Reports are kept confidential.
 
 Maintainers decide on a response in proportion to what happened, from a private note, to a
 public warning, to a temporary or permanent ban from project spaces. They may remove

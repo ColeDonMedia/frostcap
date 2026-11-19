@@ -108,6 +108,16 @@ struct U {
     cap: vec4<f32>,         // x0, y0, x1, y1
     keys: vec4<f32>,        // x0, y0, x1, y1
     keys2: vec4<f32>,       // alpha
+    dev: vec4<f32>,         // laptop base h, base overhang, webcam border w, has background image
+    cam_border: vec4<f32>,  // webcam border colour
+    cam_fx: vec4<f32>,      // brightness, contrast, saturation, shadow strength
+    key: vec4<f32>,         // key colour rgb, similarity
+    key2: vec4<f32>,        // smoothness, spill, key enabled, mirror
+    bgk: vec4<f32>,         // webcam bg kind, blur, gradient angle (rad)
+    bgc1: vec4<f32>,
+    bgc2: vec4<f32>,
+    ann_n: vec4<f32>,       // count, text layer present
+    ann: array<vec4<f32>, 32>, // per annotation: geom, colour+alpha, (kind, stroke, fill, radius), (strength, dim)
 };
 
 @group(0) @binding(0) var<uniform> u: U;
@@ -116,6 +126,31 @@ struct U {
 @group(0) @binding(3) var t_cam: texture_2d<f32>;
 @group(0) @binding(4) var t_cap: texture_2d<f32>;
 @group(0) @binding(5) var t_keys: texture_2d<f32>;
+@group(0) @binding(6) var t_bg: texture_2d<f32>;
+@group(0) @binding(7) var t_cambg: texture_2d<f32>;
+@group(0) @binding(8) var t_ann: texture_2d<f32>;
+
+fn sd_tri(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> f32 {
+    let e0 = b - a;
+    let e1 = c - b;
+    let e2 = a - c;
+    let v0 = p - a;
+    let v1 = p - b;
+    let v2 = p - c;
+    let pq0 = v0 - e0 * clamp(dot(v0, e0) / dot(e0, e0), 0.0, 1.0);
+    let pq1 = v1 - e1 * clamp(dot(v1, e1) / dot(e1, e1), 0.0, 1.0);
+    let pq2 = v2 - e2 * clamp(dot(v2, e2) / dot(e2, e2), 0.0, 1.0);
+    let s = sign(e0.x * e2.y - e0.y * e2.x);
+    let d = min(min(vec2<f32>(dot(pq0, pq0), s * (v0.x * e0.y - v0.y * e0.x)),
+                    vec2<f32>(dot(pq1, pq1), s * (v1.x * e1.y - v1.y * e1.x))),
+                    vec2<f32>(dot(pq2, pq2), s * (v2.x * e2.y - v2.y * e2.x)));
+    return -sqrt(d.x) * sign(d.y);
+}
+
+fn cbcr(c: vec3<f32>) -> vec2<f32> {
+    let y = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+    return vec2<f32>((c.b - y) / 1.8556, (c.r - y) / 1.5748);
+}
 
 fn over(dst: vec3<f32>, src: vec3<f32>, a: f32) -> vec3<f32> {
     return mix(dst, src, clamp(a, 0.0, 1.0));
@@ -233,6 +268,12 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
         col = c.rgb * c.a;
     }
 
+    // 1b. background image (premultiplied, output-sized)
+    if (u.dev.w > 0.5) {
+        let b = textureLoad(t_bg, vec2<i32>(p), 0);
+        col = col * (1.0 - b.a) + b.rgb;
+    }
+
     // 2. window shadow
     if (u.shadow.w > 0.5) {
         let s = rrect_shadow(u.shadow_rect.xy, u.shadow_rect.zw, p, u.shadow.y, u.shadow.x);
@@ -242,15 +283,46 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     // 3. window: base fill, then (clipped) title bar + video
     let wlo = u.win.xy;
     let whi = u.win.zw;
+    let kind = i32(u.win2.z + 0.5);
+    let bezel = u.win2.w;
+    if (kind == 4) {
+        // laptop keyboard base: a metal slab under the lid, wider than the lid
+        let blo = vec2<f32>(wlo.x - u.dev.y, whi.y - 10.0 * us);
+        let bhi = vec2<f32>(whi.x + u.dev.y, whi.y + u.dev.x);
+        let t = clamp((p.y - whi.y) / max(u.dev.x, 1e-3), 0.0, 1.0);
+        let metal = mix(srgb(216.0, 219.0, 226.0), srgb(150.0, 155.0, 166.0), t);
+        col = over(col, metal, cov(sd_rrect(p, blo, bhi, 8.0 * us)));
+        let cx = (wlo.x + whi.x) * 0.5;
+        let notch = sd_rrect(p, vec2<f32>(cx - 36.0 * us, whi.y - 2.0 * us), vec2<f32>(cx + 36.0 * us, whi.y + 5.0 * us), 4.0 * us);
+        col = over(col, srgb(120.0, 125.0, 136.0), 0.6 * cov(notch));
+    }
     let wc = cov(sd_rrect(p, wlo, whi, u.win2.x));
     if (wc > 0.0) {
-        col = over(col, srgb(17.0, 20.0, 28.0), wc);
+        var body = srgb(17.0, 20.0, 28.0);
+        if (kind == 4) {
+            body = srgb(12.0, 13.0, 17.0);
+        } else if (kind == 5) {
+            body = srgb(8.0, 9.0, 12.0);
+        }
+        col = over(col, body, wc);
         let bar_h = u.win2.y;
-        let kind = i32(u.win2.z + 0.5);
         var inner = vec3<f32>(0.0);
         let uv = (p - u.vid.xy) / max(u.vid.zw - u.vid.xy, vec2<f32>(1e-3));
         let video = textureSampleLevel(t_video, samp, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), u.size.w).rgb;
         inner = video;
+        if (kind >= 4) {
+            // device: the video sits inside the bezel
+            let ir = select(4.0 * us, max(u.win2.x - bezel, 2.0 * us), kind == 5);
+            inner = mix(body, video, cov(sd_rrect(p, u.vid.xy, u.vid.zw, ir)));
+            let cx = (u.vid.x + u.vid.z) * 0.5;
+            if (kind == 5) {
+                let c = vec2<f32>(cx, u.vid.y + 12.0 * us);
+                inner = over(inner, srgb(6.0, 6.0, 9.0), cov(sd_rrect(p, c - vec2<f32>(34.0 * us, 8.0 * us), c + vec2<f32>(34.0 * us, 8.0 * us), 8.0 * us)));
+            } else {
+                let c = vec2<f32>(cx, wlo.y + bezel * 0.5);
+                inner = over(inner, srgb(44.0, 48.0, 64.0), cov(length(p - c) - 2.5 * us));
+            }
+        }
         if (bar_h > 0.0) {
             var bar = srgb(28.0, 32.0, 48.0);
             if (kind == 2) {
@@ -283,6 +355,69 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
         col = over(col, inner, wc);
     }
 
+    // 3b. annotations over the screen content (after the zoom transform)
+    let vclip = cov(sd_rrect(p, u.vid.xy, u.vid.zw, 0.0));
+    if (vclip > 0.0) {
+        let vuv_scale = max(u.vid.zw - u.vid.xy, vec2<f32>(1e-3));
+        for (var i = 0; i < i32(u.ann_n.x); i = i + 1) {
+            let g = u.ann[i * 4];
+            let cl = u.ann[i * 4 + 1];
+            let m = u.ann[i * 4 + 2];
+            let q = u.ann[i * 4 + 3];
+            let kind = i32(m.x + 0.5);
+            let sw = m.y;
+            let al = cl.w * vclip;
+            if (kind == 0) {
+                let a = g.xy;
+                let b = g.zw;
+                let dv = b - a;
+                let len = max(length(dv), 1e-3);
+                let dir = dv / len;
+                let perp = vec2<f32>(-dir.y, dir.x);
+                let hl = min(max(sw * 3.5, 14.0 * us), len);
+                let hw = hl * 0.55;
+                let base = b - dir * hl;
+                let ds = sd_segment(p, a, b - dir * hl * 0.8) - sw * 0.5;
+                let dt = sd_tri(p, b, base + perp * hw, base - perp * hw);
+                col = over(col, cl.rgb, al * cov(min(ds, dt)));
+            } else if (kind == 2 || kind == 3 || kind == 4 || kind == 5 || kind == 6 || kind == 7) {
+                var d: f32;
+                if (kind == 3) {
+                    let c = (g.xy + g.zw) * 0.5;
+                    let r = max((g.zw - g.xy) * 0.5, vec2<f32>(1e-3));
+                    d = (length((p - c) / r) - 1.0) * min(r.x, r.y);
+                } else {
+                    d = sd_rrect(p, g.xy, g.zw, m.w);
+                }
+                if (kind == 2 || kind == 3) {
+                    var a = cov(abs(d) - sw * 0.5);
+                    if (m.z > 0.5) {
+                        a = cov(d);
+                    }
+                    col = over(col, cl.rgb, al * a);
+                } else if (kind == 4) {
+                    col = over(col, cl.rgb, al * 0.4 * cov(d));
+                } else if (kind == 5) {
+                    col = over(col, vec3<f32>(0.0), al * q.y * (1.0 - cov(d)));
+                } else if (kind == 6) {
+                    let uvb = (p - u.vid.xy) / vuv_scale;
+                    let bl = textureSampleLevel(t_video, samp, clamp(uvb, vec2<f32>(0.0), vec2<f32>(1.0)), u.size.w + 1.0 + q.x * 5.0).rgb;
+                    col = over(col, bl, al * cov(d));
+                } else {
+                    let block = mix(3.0, 40.0, q.x) * us;
+                    let qp = g.xy + (floor((p - g.xy) / block) + vec2<f32>(0.5)) * block;
+                    let uvq = (qp - u.vid.xy) / vuv_scale;
+                    let px = textureSampleLevel(t_video, samp, clamp(uvq, vec2<f32>(0.0), vec2<f32>(1.0)), u.size.w + log2(max(block, 1.0))).rgb;
+                    col = over(col, px, al * cov(d));
+                }
+            }
+        }
+        if (u.ann_n.y > 0.5) {
+            let s = textureLoad(t_ann, vec2<i32>(p), 0);
+            col = (col * (1.0 - s.a) + s.rgb) * vclip + col * (1.0 - vclip);
+        }
+    }
+
     // 4. click ripples (stroke, then fill on top, like the preview)
     let rip_col = srgb(78.0, 210.0, 251.0);
     for (var i = 0; i < i32(u.rip.x); i = i + 1) {
@@ -308,15 +443,60 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
         col = over(col, srgb(11.0, 13.0, 19.0), c.z * cov(abs(sd) - 0.8 * cs));
     }
 
-    // 6. webcam bubble (not zoomed)
+    // 6. webcam bubble (not zoomed): colour grade, chroma key, background, border
     if (u.cam2.z > 0.5) {
-        let s = rrect_shadow(u.cam.xy, u.cam.zw, p, u.cam2.y, u.cam2.x);
-        col = over(col, vec3<f32>(0.0), 0.4 * s);
+        let sh = rrect_shadow(u.cam.xy, u.cam.zw, p, u.cam2.y, u.cam2.x);
+        col = over(col, vec3<f32>(0.0), u.cam_fx.w * sh);
         let c = cov(sd_rrect(p, u.cam.xy, u.cam.zw, u.cam2.x));
         if (c > 0.0) {
             let l = clamp((p - u.cam.xy) / max(u.cam.zw - u.cam.xy, vec2<f32>(1e-3)), vec2<f32>(0.0), vec2<f32>(1.0));
-            let cuv = mix(u.cam_uv.xy, u.cam_uv.zw, l);
-            col = over(col, textureSampleLevel(t_cam, samp, cuv, u.cam2.w).rgb, c);
+            let lx = select(l.x, 1.0 - l.x, u.key2.w > 0.5);
+            let cuv = mix(u.cam_uv.xy, u.cam_uv.zw, vec2<f32>(lx, l.y));
+            let raw = textureSampleLevel(t_cam, samp, cuv, u.cam2.w).rgb;
+            var cc = (raw - vec3<f32>(0.5)) * u.cam_fx.y + vec3<f32>(0.5) + vec3<f32>(u.cam_fx.x);
+            let lum = dot(cc, vec3<f32>(0.2126, 0.7152, 0.0722));
+            cc = clamp(mix(vec3<f32>(lum), cc, u.cam_fx.z), vec3<f32>(0.0), vec3<f32>(1.0));
+            var ka = 1.0;
+            var rgb = cc;
+            var alpha = 1.0;
+            if (u.key2.z > 0.5) {
+                let thr = u.key.w * 0.5;
+                let soft = u.key2.x * 0.5 + 0.001;
+                let d = length(cbcr(raw) - cbcr(u.key.rgb));
+                ka = smoothstep(thr, thr + soft, d);
+                let sp = u.key2.y * (1.0 - smoothstep(thr, thr * 2.0 + soft, d));
+                cc = mix(cc, vec3<f32>(dot(cc, vec3<f32>(0.2126, 0.7152, 0.0722))), sp);
+                var bgc = vec3<f32>(0.0);
+                var bga = 0.0;
+                let kind = i32(u.bgk.x + 0.5);
+                if (kind == 1) {
+                    bgc = u.bgc1.rgb;
+                    bga = u.bgc1.a;
+                } else if (kind == 2) {
+                    let dir = vec2<f32>(sin(u.bgk.z), -cos(u.bgk.z));
+                    let t = clamp(dot(l - vec2<f32>(0.5), dir) + 0.5, 0.0, 1.0);
+                    let gc = mix(u.bgc1, u.bgc2, t);
+                    bgc = gc.rgb;
+                    bga = gc.a;
+                } else if (kind == 3) {
+                    let im = textureSampleLevel(t_cambg, samp, l, 0.0);
+                    bgc = im.rgb;
+                    bga = im.a;
+                } else if (kind == 4) {
+                    let bl = textureSampleLevel(t_cam, samp, cuv, u.cam2.w + 1.0 + u.bgk.y * 5.0).rgb;
+                    bgc = vec3<f32>(dot(bl, vec3<f32>(0.2126, 0.7152, 0.0722)));
+                    bga = 1.0;
+                }
+                alpha = ka + bga * (1.0 - ka);
+                rgb = (cc * ka + bgc * bga * (1.0 - ka)) / max(alpha, 1e-4);
+            }
+            let bw = u.dev.z;
+            if (bw > 0.0) {
+                let inside = cov(sd_rrect(p, u.cam.xy + vec2<f32>(bw), u.cam.zw - vec2<f32>(bw), max(u.cam2.x - bw, 0.0)));
+                rgb = mix(mix(rgb, u.cam_border.rgb, u.cam_border.a), rgb, inside);
+                alpha = max(alpha, (1.0 - inside) * u.cam_border.a);
+            }
+            col = over(col, rgb, c * alpha);
         }
     }
 

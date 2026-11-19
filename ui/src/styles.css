@@ -1304,7 +1304,7 @@ button {
 }
 .tabs {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   gap: 2px;
   padding: 8px;
   border-bottom: 1px solid var(--glass-border);
@@ -1314,7 +1314,7 @@ button {
   border: 0;
   background: transparent;
   border-radius: var(--r-sm);
-  padding: 7px 2px 6px;
+  padding: 11px 2px 10px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1461,13 +1461,16 @@ button {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  height: 252px;
+  height: auto;
+  min-height: 300px;
   overflow: hidden;
 }
 .timeline__head {
   display: flex;
+  flex-wrap: wrap; /* long languages and pending proposals wrap onto a second row instead of clipping */
   align-items: center;
   gap: 4px;
+  row-gap: 6px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--glass-border);
 }
@@ -1479,7 +1482,7 @@ button {
 }
 .timeline__body {
   flex: 1;
-  min-height: 0;
+  min-height: 230px;
   display: grid;
   grid-template-columns: 84px 1fr;
   background: var(--glass-strong);
@@ -2203,4 +2206,388 @@ button {
 }
 .hotkey__capture {
   border-color: var(--focus);
+}
+
+/* "All displays" source card: no thumbnail, a multi-monitor glyph on a brand-tinted tile. */
+.srccard__alldisp {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--accent-text);
+  background: linear-gradient(135deg, rgba(78, 210, 251, 0.14), rgba(7, 82, 241, 0.2));
+}
+.srccard__thumb .srccard__alldisp svg {
+  width: 44px;
+  height: 44px;
+}
+
+/* Annotation layer over the preview canvas */
+.annot-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.annot-outline {
+  fill: none;
+  stroke: var(--accent-line);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 3;
+}
+.annot-ghost {
+  fill: rgba(78, 210, 251, 0.12);
+  stroke: var(--accent-line);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+.annot-handle {
+  fill: var(--snow-white);
+  stroke: var(--accent-line-2);
+  stroke-width: 2;
+}
+.annot-sel:focus-visible {
+  outline: none;
+}
+.annot-sel:focus-visible .annot-outline {
+  stroke: var(--focus);
+  stroke-width: 2.5;
+  stroke-dasharray: none;
+}
+.annot-text-edit {
+  position: absolute;
+  resize: none;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1.5px solid var(--focus);
+  background: rgba(8, 10, 18, 0.82);
+  color: #fff;
+  font: 600 16px/1.25 var(--font, system-ui);
+  text-align: center;
+  pointer-events: auto;
+}
+/* Annotation and speed bars on the timeline */
+.rbar {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: grab;
+  color: var(--snow-white);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+.rbar:active {
+  cursor: grabbing;
+}
+.rbar[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--focus);
+}
+.rbar span {
+  pointer-events: none;
+}
+.rbar--ann {
+  background: linear-gradient(135deg, var(--glacier-deep), var(--arctic-blue));
+  border: 1px solid rgba(78, 210, 251, 0.55);
+}
+/* Speed regions are striped so they never read as cuts (hatched, grey) or zooms (solid blue). */
+.rbar--speed {
+  background: repeating-linear-gradient(135deg, rgba(7, 82, 241, 0.78) 0 8px, rgba(17, 81, 239, 0.92) 8px 16px);
+  border: 1px solid rgba(78, 210, 251, 0.8);
+}
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+.tool {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 8px 2px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--field-border);
+  background: var(--field-bg);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.tool[aria-checked="true"] {
+  border-color: var(--accent-line);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--accent-line);
+}
+.tool:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.colorfield {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.colorfield input[type="color"] {
+  width: 36px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--field-border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* Batch export */
+.batch-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.batch-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.batch-jobs {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.batch-job {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: var(--r-md);
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+}
+.batch-job .progress {
+  grid-column: 1 / -1;
+}
+.batch-job__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.batch-job--error .batch-job__state {
+  white-space: normal;
+  max-width: 60%;
+  overflow-wrap: anywhere;
+}
+.batch-job--done .batch-job__state {
+  color: var(--ok);
+}
+.batch-job--error .batch-job__state {
+  color: var(--danger);
+}
+
+/* Suggested cuts: dashed proposals on the video track, accepted one by one or all at once */
+.cutprop {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border: 2px dashed var(--accent-line);
+  border-radius: 8px;
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0 6px, transparent 6px 12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+}
+.timeline__proposals {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+}
+
+/* Icon-only inspector tabs: a styled tooltip on hover (short delay) and on keyboard focus, plus the panel title */
+.tab[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-2px);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--glass-strong, #161a2a);
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 20;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.tab[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%);
+  transition-delay: 0.35s;
+}
+.tab[data-tip]:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%);
+}
+.tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.tabs {
+  overflow: visible;
+}
+.tabpanel__title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  margin-bottom: -6px;
+}
+
+/* Suggested cuts: accept / reject chip (28px targets) shown on hover, focus or tab */
+.cutprop {
+  overflow: visible;
+}
+.cutprop__chip {
+  position: absolute;
+  top: -34px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--glass-strong, #161a2a);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.cutprop:hover .cutprop__chip,
+.cutprop:focus-within .cutprop__chip {
+  opacity: 1;
+  pointer-events: auto;
+}
+.cutprop__ok,
+.cutprop__no {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.cutprop__ok {
+  background: var(--accent-grad);
+  color: var(--on-accent);
+}
+.cutprop__no {
+  background: var(--hover);
+  color: var(--text);
+}
+.cutprop__ok:focus-visible,
+.cutprop__no:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.track__empty--btn {
+  position: absolute;
+  left: 8px;
+  top: 3px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px dashed var(--field-border);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.track__empty--btn:hover {
+  color: var(--text);
+  border-color: var(--accent-line);
+}
+.rbar .handle {
+  width: 12px;
+}
+
+/* Pill toggles for batch aspects / formats (28px+ targets) */
+.pill {
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--field-border);
+  background: var(--field-bg);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pill[aria-checked="true"] {
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+.pill:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.pill:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.imgthumb {
+  width: 40px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid var(--field-border);
+  flex: none;
+}
+.imgthumb--empty {
+  display: inline-block;
+  background: linear-gradient(135deg, rgba(78, 210, 251, 0.35), rgba(7, 82, 241, 0.45));
+}
+.tool[aria-checked="true"] {
+  background: rgba(78, 210, 251, 0.16);
+  color: var(--text);
+  font-weight: 700;
+}
+
+/* Keep the timeline header on one line in long languages */
+.timeline__proposals .field__hint,
+.timeline__head .btn {
+  white-space: nowrap;
+}
+
+/* Zoom controls wrap as one group, never split across header rows */
+.timeline__zoomgroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  white-space: nowrap;
 }

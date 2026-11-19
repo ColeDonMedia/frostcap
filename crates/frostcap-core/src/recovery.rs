@@ -21,8 +21,23 @@ use crate::project::{VideoTrack, WEBCAM_FILE};
 use crate::recorder::{INPUT_SIDECAR, SESSION_SIDECAR, SessionSidecar, clamp_tracks, pause_gaps};
 use crate::timeline::Gap;
 
-/// Re-patch a WAV written by [`crate::audio`] to its full length. Returns
-/// (sample_rate, channels, frames).
+/// Header edits that make a WAV of `len` bytes (head = its first bytes) valid again:
+/// the data chunk is assumed to run to the end of the file, cut to whole frames.
+/// Returns (sample_rate, channels, frames, edits).
+/// `(sample_rate, channels, frames, header edits)`.
+type Repair = (u32, u16, u64, Vec<(u64, Vec<u8>)>);
+
+fn repair_ops(head: &[u8], len: u64) -> Option<Repair> {
+    let info = crate::wav::parse(head, len)?;
+    let block = u64::from(info.block);
+    let data = len.checked_sub(info.data_pos)?;
+    let data = data - data % block;
+    let ops = crate::wav::patch_ops_for(&info, len, data, info.block);
+    Some((info.rate, info.channels, data / block, ops))
+}
+
+/// Re-patch a WAV written by [`crate::audio`] to its full length (RIFF or RF64).
+/// Returns (sample_rate, channels, frames).
 fn repair_wav(path: &Path) -> Option<(u32, u16, u64)> {
     let mut f = fs::OpenOptions::new()
         .read(true)
@@ -30,39 +45,18 @@ fn repair_wav(path: &Path) -> Option<(u32, u16, u64)> {
         .open(path)
         .ok()?;
     let len = f.metadata().ok()?.len();
-    let mut head = [0u8; 12];
-    f.read_exact(&mut head).ok()?;
-    if &head[0..4] != b"RIFF" || &head[8..12] != b"WAVE" {
-        return None;
+    let mut head = Vec::new();
+    Read::by_ref(&mut f)
+        .take(4096)
+        .read_to_end(&mut head)
+        .ok()?;
+    let (rate, ch, frames, ops) = repair_ops(&head, len)?;
+    for (off, bytes) in ops {
+        f.seek(SeekFrom::Start(off)).ok()?;
+        f.write_all(&bytes).ok()?;
     }
-    let mut pos = 12u64;
-    let (mut rate, mut ch, mut block) = (0u32, 0u16, 0u16);
-    while pos + 8 <= len {
-        f.seek(SeekFrom::Start(pos)).ok()?;
-        let mut ck = [0u8; 8];
-        f.read_exact(&mut ck).ok()?;
-        let size = u64::from(u32::from_le_bytes(ck[4..8].try_into().ok()?));
-        if &ck[0..4] == b"fmt " {
-            let mut fmt = [0u8; 16];
-            f.read_exact(&mut fmt).ok()?;
-            ch = u16::from_le_bytes([fmt[2], fmt[3]]);
-            rate = u32::from_le_bytes(fmt[4..8].try_into().ok()?);
-            block = u16::from_le_bytes([fmt[12], fmt[13]]);
-        } else if &ck[0..4] == b"data" {
-            let data = len - (pos + 8);
-            let data = data - data % u64::from(block.max(1));
-            f.seek(SeekFrom::Start(4)).ok()?;
-            f.write_all(&u32::try_from(len - 8).unwrap_or(u32::MAX).to_le_bytes())
-                .ok()?;
-            f.seek(SeekFrom::Start(pos + 4)).ok()?;
-            f.write_all(&u32::try_from(data).unwrap_or(u32::MAX).to_le_bytes())
-                .ok()?;
-            f.sync_all().ok()?;
-            return (rate > 0).then(|| (rate, ch, data / u64::from(block.max(1))));
-        }
-        pos += 8 + size + size % 2;
-    }
-    None
+    f.sync_all().ok()?;
+    Some((rate, ch, frames))
 }
 
 /// Privacy scrub of a finished project: drop keys and/or window titles, save,
@@ -356,5 +350,44 @@ mod tests {
             "second recovery must be refused"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod wav_tests {
+    use super::*;
+
+    fn fmt() -> Vec<u8> {
+        let mut f = Vec::new();
+        f.extend_from_slice(&1u16.to_le_bytes());
+        f.extend_from_slice(&2u16.to_le_bytes());
+        f.extend_from_slice(&48_000u32.to_le_bytes());
+        f.extend_from_slice(&192_000u32.to_le_bytes());
+        f.extend_from_slice(&4u16.to_le_bytes());
+        f.extend_from_slice(&16u16.to_le_bytes());
+        f
+    }
+
+    #[test]
+    fn repairing_a_file_beyond_4_gib_writes_rf64() {
+        let h = crate::wav::header(&fmt());
+        let len = (5u64 << 30) + h.bytes.len() as u64 + 3; // torn last frame
+        let (rate, ch, frames, ops) = repair_ops(&h.bytes, len).unwrap();
+        assert_eq!((rate, ch, frames), (48_000, 2, (5u64 << 30) / 4));
+        let mut head = h.bytes.clone();
+        for (off, b) in ops {
+            head[off as usize..off as usize + b.len()].copy_from_slice(&b);
+        }
+        let info = crate::wav::parse(&head, len).unwrap();
+        assert!(info.rf64);
+        assert_eq!(info.data_len, 5u64 << 30);
+    }
+
+    #[test]
+    fn repairing_a_small_junk_file_stays_riff() {
+        let h = crate::wav::header(&fmt());
+        let (_, _, frames, ops) = repair_ops(&h.bytes, h.bytes.len() as u64 + 4000).unwrap();
+        assert_eq!(frames, 1000);
+        assert!(ops.iter().all(|(o, _)| *o != 0));
     }
 }

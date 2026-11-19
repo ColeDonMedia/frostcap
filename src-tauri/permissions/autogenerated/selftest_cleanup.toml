@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-selftest-cleanup"
+description = "Enables the selftest_cleanup command without any pre-configured scope."
+commands.allow = ["selftest_cleanup"]
+
+[[permission]]
+identifier = "deny-selftest-cleanup"
+description = "Denies the selftest_cleanup command without any pre-configured scope."
+commands.deny = ["selftest_cleanup"]

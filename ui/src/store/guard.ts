@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import { useApp } from "./app";
 import { useEditor } from "./editor";
+import { t } from "../i18n";
 
 export type Pending = { kind: "open"; path: string } | { kind: "close"; close: () => void };
 export type Choice = "save" | "discard" | "cancel";
@@ -41,7 +42,7 @@ export const useGuard = create<GuardState>((set, get) => ({
         await useEditor.getState().save();
       } catch (e) {
         set({ saving: false });
-        useApp.getState().reportIssue(e, "Save failed");
+        useApp.getState().reportIssue(e, t("guard.saveFailed"));
         return; // keep the dialog open
       }
       set({ saving: false });

@@ -1,0 +1,59 @@
+{
+  "args": {
+    "jobId": "job-2",
+    "jobs": [
+      {
+        "outPath": "C:\\Users\\me\\Videos\\Frostcap\\clip.mp4",
+        "preset": {
+          "aspect": "16:9",
+          "format": "mp4",
+          "fps": 60,
+          "height": 1080,
+          "width": 1920
+        }
+      },
+      {
+        "outPath": "C:\\Users\\me\\Videos\\Frostcap\\clip-vertical.mp4",
+        "preset": {
+          "aspect": "9:16",
+          "format": "mp4",
+          "fps": 30,
+          "height": 1920,
+          "width": 1080
+        }
+      }
+    ],
+    "projectPath": "C:\\Users\\me\\Videos\\Frostcap\\Recording 2026-11-17 14.03.31.frostcap"
+  },
+  "error": {
+    "code": "invalid_path",
+    "message": "invalid path: two jobs write the same file"
+  },
+  "response": {
+    "jobId": "job-2",
+    "results": [
+      {
+        "bytes": 4812345,
+        "index": 0,
+        "ok": true,
+        "outPath": "C:\\Users\\me\\Videos\\Frostcap\\clip.mp4",
+        "output": {
+          "aspect": "16:9",
+          "format": "mp4",
+          "fps": 60,
+          "height": 1080,
+          "width": 1920
+        }
+      },
+      {
+        "error": {
+          "code": "internal",
+          "message": "job 2: this PC has no AV1 encoder (Media Foundation); pick another format"
+        },
+        "index": 1,
+        "ok": false,
+        "outPath": "C:\\Users\\me\\Videos\\Frostcap\\clip-vertical.mp4"
+      }
+    ]
+  }
+}

@@ -14,11 +14,13 @@ const MODS: [string, string][] = [
 ];
 const ORDER = ["Ctrl", "Alt", "Shift", "Win"];
 
+import { t } from "../i18n";
+
 export type ChordResult = { ok: true; chord: string } | { ok: false; error: string };
 
 export function validateChord(input: string): ChordResult {
-  const fail = (why: string): ChordResult => ({ ok: false, error: `“${input}” is not a valid hotkey. ${why}` });
-  const bad = () => fail("Use two modifiers including Ctrl or Win, plus a letter, digit or F1–F24, e.g. Ctrl+Alt+Shift+R.");
+  const fail = (why: string): ChordResult => ({ ok: false, error: t("hk.invalid", { input, why }) });
+  const bad = () => fail(t("hk.shape"));
   const parts = input.split("+").map((p) => p.trim().toUpperCase());
   if (parts.length < 2) return bad();
   const key = parts.pop()!;
@@ -34,9 +36,9 @@ export function validateChord(input: string): ChordResult {
   else if (/^F([1-9]|1\d|2[0-4])$/.test(key)) k = key;
   else return bad();
   // One modifier collides with ordinary app shortcuts (Ctrl+S...).
-  if (mods.size < 2) return fail("Use at least two modifiers, e.g. Ctrl+Shift+R.");
+  if (mods.size < 2) return fail(t("hk.twoMods"));
   // Ctrl+Alt is AltGr on many keyboard layouts: it would swallow typed characters.
-  if (mods.size === 2 && mods.has("Ctrl") && mods.has("Alt")) return fail("Ctrl+Alt alone is AltGr on many keyboards; add Shift or Win.");
+  if (mods.size === 2 && mods.has("Ctrl") && mods.has("Alt")) return fail(t("hk.altgr"));
   return { ok: true, chord: [...ORDER.filter((m) => mods.has(m)), k].join("+") };
 }
 
@@ -51,7 +53,7 @@ export function validateBindings(b: HotkeyBindings): string | null {
   if (!a.ok) return a.error;
   const p = validateChord(b.pauseResume);
   if (!p.ok) return p.error;
-  if (a.chord === p.chord) return "Start/stop and pause/resume need different hotkeys.";
+  if (a.chord === p.chord) return t("hk.different");
   return null;
 }
 

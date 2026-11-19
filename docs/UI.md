@@ -1,6 +1,6 @@
 # Frostcap UI
 
-React 19 + Vite 6 + TypeScript, zustand for state, `motion` (LazyMotion with `domAnimation`), lucide-react icons, vitest for tests. No UI kit, no web fonts, no network requests. Lives in `ui/`.
+React 19 + Vite 8 + TypeScript 7 (native `tsc`; it has no JS API), zustand for state, `motion` (LazyMotion with `domAnimation`), lucide-react icons, vitest for tests. No UI kit, no web fonts, no network requests. Lives in `ui/`.
 
 ```
 npm --prefix ui install --cache .toolchain\npm-cache
@@ -93,6 +93,36 @@ Space or K play/pause · S split · Z add zoom · Del delete · Ctrl+Z / Ctrl+Y 
 - **Countdown:** has a persistent live region and a focus trap.
 - **Preview focus click:** inverts the current zoom transform (`canvasToContent`).
 - **Accessibility and layout:** a skip link, `aria-controls` only for the rendered panel, a 12 px minimum font size, `--recbar-space` bottom padding, and `.page__inner` capped at 1480 px.
+
+## Internationalization
+
+`ui/src/i18n/`: a typed message catalog and `t()`, no library. `en.ts` is the source of truth for the key set (`MessageKey`); `es`, `de`, `fr`, `pt-BR` and `ja` are `Record<MessageKey, Msg>`, so `tsc` rejects missing or extra keys. A `Msg` is a string with `{name}` placeholders, or an object of `Intl.PluralRules` categories (`one`, `other`, ...; `other` required) selected by the `count` parameter. `tRich()` turns `<b>...</b>` into elements. Lookup falls back to English, then to the key.
+
+- **Language:** `Settings.language` is `"system"` (default, from `navigator.languages`, `pt-*` maps to pt-BR) or one locale. It is persisted with the other settings (`frostcap.settings.v1`) and chosen in Settings → Appearance. A change remounts the app tree (`App.tsx` keys a fragment on the locale) so every string is re-translated; toasts already shown keep their old text.
+- **Not translated by design:** Frostcap, key names (Ctrl, Shift, Space, Home...), MP4/GIF/H.264, units such as ms, px, dB, Hz. Messages that come from the Rust backend (`error.message`) stay English; only the surrounding advice (`describeIssue`) is translated.
+- **Tests:** `i18n.test.ts` (same keys in every locale, same placeholders, no empty strings, plural `other` present, detection, plurals, interpolation) and `hardcoded.test.ts`, which parses every non-test `.tsx` (vite's `parseAst`) and fails on JSX text or on `aria-label`/`title`/`placeholder`/`alt`/`label`/`hint` literals containing letters. Allowlist: `Frostcap`, the version line, `Home`/`End`/`Space`. `src/test/setup.ts` pins `navigator.language` to `en-US` so tests do not depend on the developer's OS language.
+- **Layout check:** `node ui/scripts/screenshots.mjs --lang de --theme dark --width 1280 --height 800 --out <dir>` (same for `ja`) renders every screen in that locale.
+
+## In-app self-test (dev harness)
+
+`ui/src/selftest/`. `runner.ts` (ordered steps, stop on first failure, cleanup steps always run, JSON report), `flow.ts` (the scripted flow over an injected `Deps`, unit-tested with fakes), `index.ts` (real wiring: Web Audio 440 Hz tone, `<video>`/`fetch`+`decodeAudioData` probes, the editor store). `main.tsx` imports it only when `import.meta.env.DEV` or the build was made with `VITE_FROSTCAP_SELFTEST=1`; a normal production build does not contain it (checked: the dist has no self-test strings). Even then it runs only if the backend answers `launch_options() -> { selftest: true }`; if the command is missing it does nothing.
+
+Flow: `list_sources`, record the primary display ~3 s with system audio while the tone plays (pause 0.5 s, resume), `load_project`, screen.mp4 loads in a `<video>` through the asset protocol, reports a duration and seeks to the middle, system WAV decodes with peak >= 0.01, `generate_auto_zoom`, edit (zoom, caption, frame macos) and `save_project`, reload and compare, `export_project` to `<parent of the project>/frostcap-selftest-*.mp4` (inside `Videos\Frostcap`, not inside a project folder, which the path policy accepts without `pick_save_path`), the output loads in a `<video>` with the expected duration, then `selftest_cleanup`. The report is logged as `[selftest] {...}` and sent to `write_selftest_report({report})`.
+
+## Screenshots
+
+`node ui/scripts/screenshots.mjs` starts Vite if it is not running, drives headless Edge over CDP (Node's built-in `fetch`/`WebSocket`, profile in `.toolchain/edge-screenshot-profile`) with the mock backend and writes 1600x1000 PNGs of Recorder, Editor, Export sheet and Settings, dark and light, into `assets/screenshots/`. It uses `data-testid`s: `nav-<view>`, `recent-<i>`, `editor-export`, `export-sheet`.
+
+## Editor v2 (annotations, speed, webcam effects, images, batch)
+
+- **Wire/model:** `edits.annotations`, `edits.speed`, `style.backgroundImage`, the new `style.webcam` fields and the `laptop`/`phone` frames are typed in `contract.ts`/`types.ts`, read with Rust defaults and clamped to the schema in `backend.ts` (`toWireAnnotation`, `toWireSpeed`, `toWireWebcam`). `limits.drift.test.ts` also parses every `check_range` in `crates/frostcap-project/src/lib.rs` and the "Editor v2 fields" tables.
+- **Annotations:** `lib/annotations.ts` (creation, fade, hit test, drag) and `lib/overlay.ts` (canvas drawing in screen-content space: after the zoom, under cursor/webcam/captions, at most 8 at once, strokes not scaled by zoom, spotlight clipped to the content, blur/pixelate sample the frame). Draw with a tool in the Annotate tab by dragging on the preview (`Preview.tsx`, mapped through `canvasToContent`/`contentToCanvas`), select and drag handles, double-click text to edit; the selected outline is focusable (arrows move, Alt+arrows resize, Enter edits text, Ctrl+D duplicates, Delete removes). The timeline "Notes" track has draggable/resizable bars (`RangeTracks.tsx`).
+- **Speed:** `lib/speed.ts`. Speed regions are striped bars on their own track; `outputDuration`/`sourceToOutput` apply cuts first, then speed. Preview playback sets `playbackRate` (pitch follows speed).
+- **Webcam:** margin, border, mirror, brightness/contrast/saturation, shadow, green screen (CbCr key in `lib/chroma.ts`, eyedropper samples the camera frame) and background replacement (disabled with a hint until the key is on). The preview approximates the export; the exporter is authoritative.
+- **Images:** `pick_image` then `import_background` for the framed-screen background and the webcam background. Images are loaded through the asset protocol (Tauri only; the browser demo shows the file name).
+- **Suggest cuts:** `suggest_cuts` with the documented defaults; proposals are dashed bars on the video track, accepted one at a time or all at once as one undoable trim (`lib/cuts.ts`). Nothing is applied automatically.
+- **Export:** AV1 is offered only when `encoder_capabilities().formats` lists it (written as MP4). Batch export picks aspects x formats (at most 8 files), writes next to the default output folder and shows per-job progress (`jobIndex`) and results.
+- **Screenshots:** `node ui/scripts/screenshots.mjs --scenes v2` writes annotations, webcam, background-image, suggest-cuts and batch-export PNGs.
 
 ## Not done / unverified
 

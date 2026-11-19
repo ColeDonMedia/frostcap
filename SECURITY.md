@@ -15,15 +15,15 @@ branch) receives security fixes. There are no backports to older versions.
 
 Please report vulnerabilities **privately** through GitHub:
 
-1. Open the repository's **Security** tab.
-2. Choose **Report a vulnerability** (GitHub private vulnerability reporting).
+1. Open <https://github.com/ColeDonMedia/frostcap/security/advisories/new> (or the
+   repository's **Security** tab, then **Report a vulnerability**). This is GitHub's private
+   vulnerability reporting.
+2. Fill in the form.
 3. Describe the issue, affected version, and steps or a proof of concept.
 
 Do not open a public issue, discussion or pull request for a vulnerability before it is fixed.
 
-> Maintainer note: private vulnerability reporting must be enabled under
-> Settings -> Code security -> "Private vulnerability reporting". Until it is, the
-> Report button does not appear; add a contact address here as a fallback.
+> Private vulnerability reporting is enabled for this repository, so no email address is needed.
 
 What to expect: an acknowledgement within about a week, an assessment, and a fix in a new
 release when the report is confirmed. This is a volunteer project, so there are no

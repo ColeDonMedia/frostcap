@@ -13,6 +13,8 @@ import { Inspector } from "./Inspector";
 import { ExportSheet } from "./ExportSheet";
 import type { AspectPreset } from "../../types";
 import { Segmented } from "../../components/ui";
+import { speedAt } from "../../lib/speed";
+import { t } from "../../i18n";
 
 const isTyping = isTypingTarget;
 
@@ -68,7 +70,9 @@ export default function EditorView({ path }: { path: string }) {
       const st = useEditor.getState();
       const p = st.project;
       if (!p || !st.playing) return;
-      let t = video ? video.timeMs() : st.playhead + (now - last);
+      const sp = speedAt(p.speed, st.playhead);
+      video?.setRate(sp);
+      let t = video ? video.timeMs() : st.playhead + (now - last) * sp;
       last = now;
       const clips = p.clips;
       const inClip = clips.find((c) => t >= c.start && t < c.end);
@@ -114,7 +118,7 @@ export default function EditorView({ path }: { path: string }) {
       }
       if (ctrl && key === "s") {
         e.preventDefault();
-        void st.save().then(() => useApp.getState().showToast("Project saved"));
+        void st.save().then(() => useApp.getState().showToast(t("editor.saved")));
         return;
       }
       if (ctrl && key === "e") {
@@ -142,7 +146,7 @@ export default function EditorView({ path }: { path: string }) {
         case "s":
         case "S":
           e.preventDefault();
-          if (!st.splitAtPlayhead()) useApp.getState().showToast("Move the playhead inside a clip to split");
+          if (!st.splitAtPlayhead()) useApp.getState().showToast(t("editor.splitFail"));
           break;
         case "z":
         case "Z":
@@ -175,6 +179,7 @@ export default function EditorView({ path }: { path: string }) {
           break;
         case "Escape":
           st.select(null);
+          st.setTool(null);
           break;
       }
     };
@@ -186,7 +191,7 @@ export default function EditorView({ path }: { path: string }) {
     return (
       <div className="loading">
         <div className="load-error glass" role="alert">
-          <h2 className="sheet__title">Could not open this project</h2>
+          <h2 className="sheet__title">{t("editor.loadError")}</h2>
           <p className="page__sub" style={{ margin: 0 }}>{describeIssue(toBackendError({ code: errorCode ?? "internal", message: error }))}</p>
           <div className="sheet__foot">
             <button
@@ -199,10 +204,10 @@ export default function EditorView({ path }: { path: string }) {
                 else useApp.setState({ view: "recorder", projectPath: null });
               }}
             >
-              <ArrowLeft size={15} aria-hidden="true" /> Back
+              <ArrowLeft size={15} aria-hidden="true" /> {t("common.back")}
             </button>
             <button type="button" className="btn btn--primary" onClick={() => void useEditor.getState().retry()}>
-              <RotateCcw size={15} aria-hidden="true" /> Retry
+              <RotateCcw size={15} aria-hidden="true" /> {t("common.retry")}
             </button>
           </div>
         </div>
@@ -211,24 +216,24 @@ export default function EditorView({ path }: { path: string }) {
   if (loading || !project)
     return (
       <div className="loading">
-        <div className="spinner" role="status" aria-label="Loading project" />
+        <div className="spinner" role="status" aria-label={t("editor.loadingProject")} />
       </div>
     );
 
   return (
     <div className="editor">
       <div className="stage">
-        <div className="toolbar glass" role="toolbar" aria-label="Editor">
+        <div className="toolbar glass" role="toolbar" aria-label={t("editor.toolbar")}>
           <div className="toolbar__title" title={project.name}>
             {project.name}
             {dirty && (
-              <span className="badge" style={{ marginLeft: 8 }} aria-label="Unsaved changes">
-                Edited
+              <span className="badge" style={{ marginLeft: 8 }} aria-label={t("editor.unsaved")}>
+                {t("editor.edited")}
               </span>
             )}
           </div>
           <Segmented<AspectPreset>
-            label="Preview aspect ratio"
+            label={t("editor.aspect")}
             value={aspect}
             onChange={setAspect}
             options={[
@@ -238,24 +243,24 @@ export default function EditorView({ path }: { path: string }) {
             ]}
           />
           <span className="toolbar__sep" aria-hidden="true" />
-          <button type="button" className="iconbtn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={() => useEditor.getState().undo()}>
+          <button type="button" className="iconbtn" aria-label={t("common.undo")} title={t("editor.undoTitle")} disabled={!canUndo} onClick={() => useEditor.getState().undo()}>
             <Undo2 size={17} />
           </button>
-          <button type="button" className="iconbtn" aria-label="Redo" title="Redo (Ctrl+Y)" disabled={!canRedo} onClick={() => useEditor.getState().redo()}>
+          <button type="button" className="iconbtn" aria-label={t("common.redo")} title={t("editor.redoTitle")} disabled={!canRedo} onClick={() => useEditor.getState().redo()}>
             <Redo2 size={17} />
           </button>
           <button
             type="button"
             className="iconbtn"
-            aria-label="Save project"
-            title="Save (Ctrl+S)"
+            aria-label={t("editor.save")}
+            title={t("editor.saveTitle")}
             disabled={saving}
-            onClick={() => void useEditor.getState().save().then(() => useApp.getState().showToast("Project saved"))}
+            onClick={() => void useEditor.getState().save().then(() => useApp.getState().showToast(t("editor.saved")))}
           >
             <Save size={17} />
           </button>
-          <button type="button" className="btn btn--primary" onClick={() => setExporting(true)} title="Export (Ctrl+E)">
-            <Download size={15} aria-hidden="true" /> Export
+          <button type="button" className="btn btn--primary" data-testid="editor-export" onClick={() => setExporting(true)} title={t("editor.exportTitle")}>
+            <Download size={15} aria-hidden="true" /> {t("editor.export")}
           </button>
         </div>
         <Preview aspect={aspect} engine={engine} />

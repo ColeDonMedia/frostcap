@@ -65,8 +65,12 @@ const SOURCES: WireSourceList = {
 };
 SOURCES.sources = [
   ...SOURCES.monitors.map((m) => ({ id: `display:${m.id}`, kind: "display" as const, name: m.name, width: m.bounds.width, height: m.bounds.height, source: { kind: "monitor" as const, id: m.id } })),
+  // Like the backend: only offered when 2+ monitors fit one H.264 canvas (here 2560+1920 x 1440).
+  { id: "all-displays", kind: "allDisplays" as const, name: "All displays", width: 4480, height: 1440, source: { kind: "allDisplays" as const } },
   ...SOURCES.windows.map((w) => ({ id: `window:${w.hwnd}`, kind: "window" as const, name: w.title, width: w.bounds.width, height: w.bounds.height, source: { kind: "window" as const, hwnd: w.hwnd, pid: w.pid } })),
 ];
+
+const capture = { captureBorder: true, excludeOwnWindows: true };
 
 const CAMERAS: WireCameraInfo[] = [
   { id: "cam:integrated", name: "Integrated Camera" },
@@ -215,7 +219,22 @@ export function generateMockProject(dir: string, durationMs?: number, captureKey
         // Typed editor settings, Rust defaults (docs/CONTRACT.md "edits").
         frame: "minimal",
         cursor: { visible: true, smoothing: 0.6, motionBlur: 0.3 },
-        webcam: { enabled: false, shape: "circle", size: 0.22, position: "bottom-right" },
+        webcam: {
+          enabled: false,
+          shape: "circle",
+          size: 0.22,
+          position: "bottom-right",
+          margin: 28 / 1080,
+          borderWidth: 0,
+          borderColor: "#ffffff",
+          mirror: false,
+          brightness: 0,
+          contrast: 1,
+          saturation: 1,
+          shadow: 0.4,
+          chromaKey: { enabled: false, color: "#00ff00", similarity: 0.4, smoothness: 0.1, spill: 0.5 },
+          background: { kind: "none", color: "#11141c", gradient: "linear-gradient(135deg,#a1c4fd,#c2e9fb)", blur: 0.5 },
+        },
         audio: { noiseGate: true, noiseGateThreshold: -50, highPass: true, highPassHz: 80, normalize: true, targetLufs: -16, micGain: 1, systemGain: 1 },
         captions: { enabled: true, fontSize: 40, position: "bottom", background: true },
       },
@@ -224,6 +243,8 @@ export function generateMockProject(dir: string, durationMs?: number, captureKey
         { startMs: 4200, endMs: 8200, text: "Click anywhere and the camera follows smoothly." },
       ].filter((c) => c.endMs < duration),
       splits: [],
+      speed: [],
+      annotations: [],
       ui: { v: 1, zoom: { preset: "balanced", scale: 1.8, easing: "easeInOutCubic", transitionMs: 650 } },
     },
   };
@@ -303,6 +324,48 @@ const COMMANDS: Record<string, (a: Record<string, unknown>) => unknown> = {
   async pick_region(): Promise<WireRegionSelection> {
     await delay(200);
     return { monitorId: SOURCES.monitors[0].id, rect: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 }, screenRect: { x: 640, y: 360, width: 1280, height: 720 } };
+  },
+
+  async encoder_capabilities() {
+    return { h264: true, av1: false, vp9: false, formats: ["mp4", "gif"] };
+  },
+  async pick_image() {
+    return "C:\\Users\\demo\\Pictures\\wallpaper.png";
+  },
+  async import_background() {
+    return { file: "background-0123456789abcdef.png" };
+  },
+  async suggest_cuts() {
+    await delay(200);
+    return { ranges: [{ startMs: 4200, endMs: 7800 }, { startMs: 12000, endMs: 15500 }] };
+  },
+  async export_batch(a: Record<string, unknown>) {
+    const jobs = (a.jobs as { outPath: string; preset: unknown }[]) ?? [];
+    await delay(300);
+    return { jobId: String(a.jobId ?? ""), results: jobs.map((j, index) => ({ index, ok: true, outPath: j.outPath, bytes: 4_812_345, output: j.preset })) };
+  },
+  async capture_settings() {
+    return { ...capture };
+  },
+  async set_capture_border(a: Record<string, unknown>) {
+    // Like the app: turning the border off asks first; declining rejects with code "cancelled".
+    if (a.enabled === false && typeof confirm === "function" && !confirm("Hide the capture border?")) throw { code: "cancelled", message: "cancelled" };
+    capture.captureBorder = a.enabled === true;
+    return { ...capture };
+  },
+  async set_exclude_own_windows(a: Record<string, unknown>) {
+    capture.excludeOwnWindows = a.enabled === true;
+    return { ...capture };
+  },
+  async launch_options() {
+    return { selftest: false };
+  },
+  async write_selftest_report(a: Record<string, unknown>) {
+    if (typeof a.report !== "string") throw { code: "internal", message: "report must be a JSON string" };
+    return null;
+  },
+  async selftest_cleanup() {
+    return null;
   },
 
   async default_output_dir() {

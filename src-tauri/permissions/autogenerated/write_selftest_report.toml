@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-write-selftest-report"
+description = "Enables the write_selftest_report command without any pre-configured scope."
+commands.allow = ["write_selftest_report"]
+
+[[permission]]
+identifier = "deny-write-selftest-report"
+description = "Denies the write_selftest_report command without any pre-configured scope."
+commands.deny = ["write_selftest_report"]

@@ -64,6 +64,9 @@ pub struct RecordOptions {
     pub webcam: Option<String>,
     /// Store foreground window titles in the focus track (default off: opaque ids).
     pub window_titles: bool,
+    /// Show the Windows capture border while recording (default **true**; hiding it
+    /// needs Windows 11 and may be refused, which is reported as a warning).
+    pub capture_border: bool,
 }
 
 impl Default for RecordOptions {
@@ -84,6 +87,7 @@ impl RecordOptions {
             keys: KeyCapture::Off,
             webcam: None,
             window_titles: false,
+            capture_border: true,
         }
     }
 }
@@ -147,6 +151,9 @@ pub struct RecordingSession {
     cursor_baked: bool,
     timings: StartTimings,
     heartbeat: Option<Heartbeat>,
+    /// Background rewrite of the provisional project.json (window sources); joined in
+    /// `stop` so it can never overwrite the final project.
+    canvas_save: Option<ProvisionalSave>,
 }
 
 #[derive(Default)]
@@ -164,6 +171,21 @@ pub fn ensure_dpi_awareness() {
     let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
 }
 
+/// Delete `.prewarm-<pid>.mp4` leftovers of other (killed) processes in `dir`.
+fn remove_stale_prewarm_files(dir: &Path, own_pid: u32) {
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let pid = name
+            .strip_prefix(".prewarm-")
+            .and_then(|r| r.strip_suffix(".mp4"))
+            .and_then(|p| p.parse::<u32>().ok());
+        if pid.is_some_and(|p| p != own_pid) {
+            let _ = fs::remove_file(e.path());
+        }
+    }
+}
+
 /// Load the D3D11, Media Foundation and H.264 encoder DLLs ahead of the first
 /// recording (call once in the background at app start) so `start` is faster.
 /// Writes and deletes a tiny file in `dir`. Returns the time taken (ms).
@@ -171,16 +193,44 @@ pub fn prewarm(dir: &Path) -> Result<u64> {
     let t = Instant::now();
     crate::com::ensure_mta();
     fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
-    let (device, _ctx) = crate::screen::create_device()?;
+    remove_stale_prewarm_files(dir, std::process::id());
+    let (device, _ctx) = crate::screen::shared_device()?;
+    // Warm the encoder the way a real recording will use it: the primary monitor's size.
+    let (w, h) = crate::sources::list_monitors()
+        .ok()
+        .and_then(|m| m.first().map(|m| (m.bounds.width, m.bounds.height)))
+        .map_or((1920, 1080), |(w, h)| {
+            (
+                (w.max(2) as u32 & !1).min(8192),
+                (h.max(2) as u32 & !1).min(8192),
+            )
+        });
     let path = dir.join(format!(".prewarm-{}.mp4", std::process::id()));
     let res = crate::mf::H264Writer::create(
         &path,
-        crate::mf::WriterConfig::with_auto_bitrate(64, 64, 30),
+        crate::mf::WriterConfig::with_auto_bitrate(w, h, 60),
         crate::mf::WriterInput::D3D11Bgra(&device),
     );
     drop(res);
     let _ = fs::remove_file(&path);
     Ok(t.elapsed().as_millis() as u64)
+}
+
+/// Writes the provisional `project.json` on a background thread: its two fsyncs cost
+/// ~0.7 s on a busy disk, which would otherwise sit on the start-latency critical path.
+struct ProvisionalSave(std::thread::JoinHandle<Result<()>>);
+
+impl ProvisionalSave {
+    fn spawn(project: Project, dir: &Path) -> Self {
+        let dir = dir.to_path_buf();
+        Self(std::thread::spawn(move || Ok(project.save(&dir)?)))
+    }
+
+    fn wait(self) -> Result<()> {
+        self.0
+            .join()
+            .unwrap_or_else(|_| Err(Error::Capture("project.json writer panicked".into())))
+    }
 }
 
 /// Create a fresh, unique `Recording YYYY-MM-DD HH.MM.SS.frostcap` folder under `root`.
@@ -236,6 +286,7 @@ fn folder_name(dir: &Path) -> String {
 impl RecordingSession {
     /// Start recording into an (existing, empty) project folder.
     pub fn start(opts: RecordOptions, project_dir: &Path) -> Result<Self> {
+        let t_start = Instant::now();
         ensure_dpi_awareness();
         fs::create_dir_all(project_dir).map_err(|e| Error::io(project_dir, e))?;
         if fs::read_dir(project_dir)
@@ -259,6 +310,8 @@ impl RecordingSession {
                 ..c
             }),
             (ScreenTarget::Monitor(_), None) => SourceOrigin::Fixed(resolved.bounds),
+            // All displays: cursor coordinates relative to the union canvas origin.
+            (ScreenTarget::AllDisplays, _) => SourceOrigin::Fixed(resolved.bounds),
         };
         let source = SourceDescriptor {
             kind: resolved.kind,
@@ -296,7 +349,7 @@ impl RecordingSession {
             warnings: vec![],
             cursor_baked: opts.cursor,
         };
-        provisional.save(project_dir)?;
+        let provisional_save = ProvisionalSave::spawn(provisional.clone(), project_dir);
 
         let timeline = Arc::new(Timeline::default());
         let mut warnings = Vec::new();
@@ -305,6 +358,7 @@ impl RecordingSession {
         // The screen pipeline (D3D device, WGC, encoder MFT: the slow part) starts in
         // parallel with the side tracks. Order does not matter for sync: every track
         // is aligned to the first video frame via the timeline (late audio is padded).
+        let prep_ms = t_start.elapsed().as_millis() as u64;
         let screen_cfg = ScreenConfig {
             target: resolved.target,
             path: project_dir.join(SCREEN_FILE),
@@ -312,6 +366,13 @@ impl RecordingSession {
             size: None,
             fps,
             cursor: opts.cursor,
+            border: opts.capture_border,
+            monitors: resolved
+                .all
+                .as_ref()
+                .map(|a| a.0.clone())
+                .unwrap_or_default(),
+            canvas: resolved.all.as_ref().map(|a| a.1.clone()),
         };
         let screen_starter = {
             let tl = timeline.clone();
@@ -320,6 +381,7 @@ impl RecordingSession {
                 .spawn(move || ScreenCapture::start(screen_cfg, tl))
                 .map_err(|e| Error::Capture(e.to_string()))?
         };
+        let t_side = Instant::now();
         let mut open_audio = |enabled: bool, ep: AudioEndpoint, file: &str| {
             if !enabled {
                 return None;
@@ -364,6 +426,7 @@ impl RecordingSession {
                 sidecar: Some(project_dir.join(INPUT_SIDECAR)),
                 titles: opts.window_titles,
                 timeline: Some(timeline.clone()),
+                scale: resolved.all.as_ref().map_or(1.0, |a| a.1.scale),
             },
         )
         .map_err(|e| Error::io(project_dir, e));
@@ -374,11 +437,14 @@ impl RecordingSession {
                     let _ = s.stop();
                 }
                 drop((mic, system, webcam));
+                let _ = provisional_save.wait();
                 remove_session_files(project_dir);
                 return Err(e);
             }
         };
 
+        let side_tracks_ms = t_side.elapsed().as_millis() as u64;
+        let t_wait = Instant::now();
         let screen = screen_starter
             .join()
             .unwrap_or_else(|_| Err(Error::Capture("screen start panicked".into())));
@@ -387,22 +453,31 @@ impl RecordingSession {
             Err(e) => {
                 // Everything else is dropped (threads stopped) on return.
                 drop((mic, system, webcam, input));
+                let _ = provisional_save.wait();
                 remove_session_files(project_dir);
                 return Err(e);
             }
         };
-        let timings = screen.timings();
+        let mut timings = screen.timings();
+        timings.prep_ms = prep_ms;
+        timings.side_tracks_ms = side_tracks_ms;
+        timings.screen_wait_ms = t_wait.elapsed().as_millis() as u64;
         let canvas = Size {
             width: timings.width,
             height: timings.height,
         };
+        if let Err(e) = provisional_save.wait() {
+            drop((mic, system, webcam, input, screen));
+            remove_session_files(project_dir);
+            return Err(e);
+        }
         // The encoder size is only known now (window sources): keep the
         // provisional project.json consistent for recovery.
-        if canvas != provisional.canvas {
+        let canvas_save = (canvas != provisional.canvas).then(|| {
             let mut p = provisional;
             p.canvas = canvas;
-            let _ = p.save(project_dir);
-        }
+            ProvisionalSave::spawn(p, project_dir)
+        });
 
         let timeline_for_heartbeat = timeline.clone();
         let session = Self {
@@ -423,6 +498,7 @@ impl RecordingSession {
             stopped: false,
             cursor_baked: opts.cursor,
             timings,
+            canvas_save,
             heartbeat: Some(Heartbeat::start(
                 project_dir,
                 timeline_for_heartbeat,
@@ -564,6 +640,7 @@ impl RecordingSession {
                                 e.message
                             ));
                         }
+                        warnings.extend(audio_warnings(what, &i));
                         Some(i)
                     }
                     Ok(_) => {
@@ -644,6 +721,9 @@ impl RecordingSession {
             }
             None => None,
         };
+        if let Some(j) = self.canvas_save.take() {
+            let _ = j.wait();
+        }
         warnings.truncate(crate::project::limits::MAX_EDITS);
         let project = Project {
             version: PROJECT_VERSION,
@@ -690,6 +770,24 @@ impl Drop for RecordingSession {
             let _ = self.stop();
         }
     }
+}
+
+/// Warnings for audio-device faults that were handled by padding or dropping.
+fn audio_warnings(what: &str, i: &AudioCaptureInfo) -> Vec<String> {
+    let mut w = Vec::new();
+    if i.glitch_packets > 0 {
+        w.push(format!(
+            "{what}: the device reported {} glitchy packets (gaps were filled with silence)",
+            i.glitch_packets
+        ));
+    }
+    if i.unfilled_frames > 0 {
+        w.push(format!(
+            "{what}: {:.1} s of audio is missing (device stalled; the gap was too large to fill)",
+            i.unfilled_frames as f64 / f64::from(i.sample_rate.max(1))
+        ));
+    }
+    w
 }
 
 /// Write `session.json` (t0, pauses, heartbeat) for crash recovery.
@@ -944,5 +1042,106 @@ mod tests {
         };
         clamp_tracks(&mut t, 3_000);
         assert_eq!(t.cursor.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod option_tests {
+    use super::*;
+
+    #[test]
+    fn capture_border_defaults_on_and_deserializes_when_absent() {
+        assert!(RecordOptions::default().capture_border);
+        let o: RecordOptions = serde_json::from_str(r#"{"fps":30}"#).unwrap();
+        assert!(o.capture_border);
+        let o: RecordOptions = serde_json::from_str(r#"{"captureBorder":false}"#).unwrap();
+        assert!(!o.capture_border);
+    }
+}
+
+#[cfg(test)]
+mod provisional_tests {
+    use super::*;
+
+    #[test]
+    fn provisional_save_runs_in_the_background_and_lands_on_disk() {
+        let dir = crate::test_tmp_dir().join(format!("prov-{}.frostcap", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut p = crate::project::samples::fixture();
+        p.status = ProjectStatus::Recording;
+        let job = ProvisionalSave::spawn(p.clone(), &dir);
+        job.wait().unwrap();
+        let back = Project::load(&dir).unwrap();
+        assert_eq!(back.status, ProjectStatus::Recording);
+        // A failing save (invalid project) is reported by wait(), not swallowed.
+        p.fps = 0;
+        assert!(ProvisionalSave::spawn(p, &dir).wait().is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod audio_warning_tests {
+    use super::*;
+
+    fn info() -> AudioCaptureInfo {
+        AudioCaptureInfo {
+            path: PathBuf::from("a.wav"),
+            start_pos_hns: 0,
+            sample_rate: 48_000,
+            channels: 2,
+            frames: 48_000,
+            padded_frames: 0,
+            dropped_frames: 0,
+            unfilled_frames: 0,
+            glitch_packets: 0,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn clean_audio_has_no_warnings_and_faults_are_explained() {
+        assert!(audio_warnings("microphone", &info()).is_empty());
+        let mut i = info();
+        i.glitch_packets = 3;
+        i.unfilled_frames = 96_000;
+        let w = audio_warnings("system audio", &i);
+        assert_eq!(w.len(), 2, "{w:?}");
+        assert!(w[0].contains("system audio") && w[0].contains('3'));
+        assert!(w[1].contains("2.0 s"), "{w:?}");
+    }
+}
+
+#[cfg(test)]
+mod prewarm_tests {
+    use super::*;
+
+    #[test]
+    fn stale_prewarm_files_of_other_processes_are_removed_and_nothing_else() {
+        let dir = crate::test_tmp_dir().join(format!("prewarm-stale-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for f in [
+            ".prewarm-111.mp4",
+            ".prewarm-222.mp4",
+            ".prewarm-999.mp4",
+            "Recording.mp4",
+            ".prewarm-x.txt",
+        ] {
+            fs::write(dir.join(f), b"").unwrap();
+        }
+        remove_stale_prewarm_files(&dir, 999);
+        let mut left: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [".prewarm-999.mp4", ".prewarm-x.txt", "Recording.mp4"]
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

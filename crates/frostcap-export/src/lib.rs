@@ -24,6 +24,9 @@ use serde::{Deserialize, Serialize};
 
 pub use frostcap_render::{Aspect, ExportPreset as OutputPreset, ExportStats, OutputFormat, Stage};
 
+mod batch;
+pub use batch::*;
+
 use frostcap_core::{Error, Result};
 use frostcap_project::{PROJECT_FILE, Project, SCREEN_FILE, project_dir_of};
 
