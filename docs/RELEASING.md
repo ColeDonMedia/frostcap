@@ -33,7 +33,9 @@ and publishes it by hand.
    - The README status table matches what actually works.
    - Unmaintained transitive advisories: `cargo deny check advisories` with
      `unmaintained = "all"` temporarily, and decide on each.
-6. Update the changelog / release notes (what changed, known issues).
+6. Add the version to [CHANGELOG.md](../CHANGELOG.md) (what changed, known issues). After the
+   draft release is created, set its notes from that section:
+   `gh release edit vX.Y.Z --notes-file <section.md>`.
 7. Commit ("Release vX.Y.Z"), push, wait for CI.
 
 ## 2. Tag and build
@@ -107,7 +109,8 @@ dependency lifecycle scripts are skipped, so do not rely on `prebuild`-style hoo
 
 ## 3. Code signing
 
-Releases are currently **unsigned**. Options, from cheapest to most work:
+Releases are currently **unsigned**. The signing policy the project would apply with is
+[CODE_SIGNING.md](CODE_SIGNING.md). Options, from cheapest to most work:
 
 | Option | Cost | Notes |
 |---|---|---|
