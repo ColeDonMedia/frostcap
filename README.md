@@ -16,41 +16,53 @@
   <img alt="Status: pre-release" src="https://img.shields.io/badge/status-pre--release-4ED2FB">
 </p>
 
-> **Status: early development (0.1.0, pre-release).** There is no published release yet.
-> Recording works; the editor and the "baked" export are still being built. The table
-> below is honest about what works today. Build from source to try it.
+> **Status: 0.1.0 pre-release.** There is no published release yet; build from source to try it.
+> Everything below is implemented and covered by tests; the app has not had broad real-world testing yet.
 
 ## Features
 
-| Area | What it does | Status |
-|---|---|---|
-| Screen capture | Record a monitor or a single window via Windows Graphics Capture, cursor on/off, chosen frame rate, GPU frames go straight to the encoder | **Works** |
-| Encoding | H.264 in MP4 through the Windows Media Foundation encoder (hardware encoder when available). No codecs bundled | **Works** |
-| Audio | Microphone and system audio (WASAPI loopback) as separate WAV tracks, synchronised to the video | **Works** |
-| Input metadata | Cursor path, clicks and focused-window changes recorded alongside the video for auto-zoom and cursor effects | **Works** |
-| Keystroke capture | Off by default. Optional "shortcuts only" or "all keys" (key-downs only, for the key overlay and typing-based zoom) | Works in core; UI setting in progress |
-| Auto-zoom | Generates zoom segments from clicks and typing bursts, with gentle/balanced/snappy presets | **Works** (core, unit-tested) |
-| Pause / resume | Pausing removes the paused span from all tracks | In progress |
-| Region capture | Draw a region of the screen to record | In progress |
-| Webcam | Webcam recorded to a separate track for picture-in-picture | In progress |
-| Crash recovery | Recover a recording if Frostcap or Windows stops mid-recording | In progress |
-| Editor | Timeline with trims/splits, zoom segments, cursor, frame, background, captions inspector, undo/redo | UI in progress; preview does not yet play the real video |
-| Export (raw) | Export the recorded `screen.mp4` with progress | **Works** |
-| Export (baked) | Render zooms, background, padding, rounded corners, shadow, smoothed cursor, click ripples and key overlay into a new MP4 (GPU compositor) or GIF | **Planned / in progress** - presets currently fall back to the raw export |
-| Installer | NSIS installer and portable exe | Release workflow written, not yet exercised |
+**Record**
+- Record a whole monitor, a single window, or a region you draw, with a 3-2-1 countdown and the Windows capture border on.
+- Webcam, microphone and system audio, each on its own track, all on one clock.
+- Pause and resume (paused spans are cut from every track). Global hotkeys: Ctrl+Alt+Shift+R start/stop, Ctrl+Alt+Shift+P pause (configurable).
+- Cursor path, clicks and window focus are recorded alongside the video so the cursor and zooms can be re-rendered later.
+- Optional keystroke capture for a key overlay: off by default; "shortcuts only" or "all keys" (with a password warning).
+- Crash-safe: fragmented MP4 plus recovery files. If Frostcap or Windows stops mid-recording, the recording can be recovered with at most about a second lost.
 
-"In progress" means code exists in the repository but is not finished or not wired through to
-the app yet. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/UI.md](docs/UI.md) for
-details.
+**Edit**
+- Automatic zoom that follows your clicks and typing (gentle, balanced or snappy), with every zoom editable on the timeline.
+- Timeline with trims, splits, undo/redo and keyboard shortcuts; real video and audio preview with a waveform.
+- Smooth, resizable cursor with motion blur and click ripples, or hide it.
+- Backgrounds (gradients), padding, rounded corners, shadow and window frames (none, minimal, Windows, macOS).
+- Webcam bubble (circle, rounded or square, any corner and size).
+- Captions: import SRT/VTT, choose size, position and background.
+- Audio: per-track gain and mute, noise gate, high-pass filter and loudness normalisation for the mic.
+
+**Export**
+- GPU compositor (wgpu on DirectX 12) renders every edit into a new MP4 (H.264 + AAC through Windows Media Foundation, hardware encoder when available) or an animated GIF.
+- 16:9, 9:16 and 1:1 presets, resolution and frame rate options, progress and cancel. Falls back to software rendering when no GPU is available.
+
+**Principles**
+- Free and MIT licensed: no watermarks, no paywalls, no account.
+- No network requests, no telemetry. Everything stays on your PC.
+- Only permissive open-source dependencies (checked in CI); no bundled codecs.
+- Glassmorphism interface in the Frostcap palette, with a solid mode for reduced transparency, light and dark themes, and full keyboard support.
 
 ## Screenshots
 
-_Screenshots will be added with the first release._
+**Recorder:** pick a display, window or region, toggle webcam, mic, system audio and cursor polish.
 
-<!-- Put images in assets/screenshots/ and reference them here, e.g.
-![Recorder](assets/screenshots/recorder.png)
-![Editor](assets/screenshots/editor.png)
-Do not use screenshots that show private windows, names or notifications. -->
+![Frostcap recorder](assets/screenshots/recorder.png)
+
+**Editor:** auto-zoom segments, input markers and audio waveform on the timeline, with the inspector for zoom, cursor, frame, webcam, audio and captions.
+
+![Frostcap editor, dark theme](assets/screenshots/editor.png)
+
+**Light theme**
+
+![Frostcap editor, light theme](assets/screenshots/editor-light.png)
+
+<sub>Screenshots use the built-in demo data (the browser preview mode), so the preview shows a demo scene instead of a real recording.</sub>
 
 ## Privacy
 
@@ -160,13 +172,16 @@ Smoke tests that touch real hardware: `cargo run -p frostcap-core --example reco
 
 ```
 assets/brand/            logo master (logo.png) and source
-crates/frostcap-core/    capture, audio, input metadata, project format, auto-zoom (no UI)
-crates/frostcap-render/  export renderer: decode -> GPU compositor -> encode, GIF (in progress)
+assets/screenshots/      README screenshots (demo data)
+crates/frostcap-project/ project.json types and validation (shared, serde only)
+crates/frostcap-core/    capture, audio, webcam, input metadata, recovery, auto-zoom, hotkeys (no UI)
+crates/frostcap-render/  export renderer: decode -> GPU compositor -> encode, GIF
+crates/frostcap-export/  export orchestration (validate, render or copy, atomic output)
 crates/option-ext-shim/  MIT replacement for the MPL-2.0 option-ext crate
 src-tauri/               Tauri 2 app shell (window, commands) -> frostcap.exe
 ui/                      React + TypeScript + Vite user interface
 docs/                    architecture, UI, brand, privacy, legal, releasing
-scripts/                 maintenance scripts (third-party license inventory)
+scripts/                 license inventory, full verification sweep (full-scan.ps1)
 .github/                 CI, release workflow, templates, Dependabot
 deny.toml                dependency license and advisory policy (cargo-deny)
 env.ps1                  optional repo-local toolchain environment
