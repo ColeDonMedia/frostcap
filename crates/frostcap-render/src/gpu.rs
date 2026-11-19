@@ -1280,6 +1280,24 @@ mod tests {
     use crate::model::{Frame, RenderProject};
     use crate::scene;
 
+    /// Every test that touches a GPU device holds this while it does. Separate
+    /// WARP devices working at the same time crash the WARP runtime on the CI
+    /// runners (0xc0000005). The app normally has one device (the cached
+    /// [`Gpu::shared`] one; only a replacement after a GPU error briefly makes a
+    /// second), so the tests never overlap devices either.
+    static GPU_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn gpu_serial() -> std::sync::MutexGuard<'static, ()> {
+        GPU_TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The cached WARP device, like the app's one cached device.
+    fn warp() -> Result<Gpu> {
+        Gpu::shared(true, true)
+    }
+
     #[test]
     fn texture_dimensions_are_checked_against_the_device_limit() {
         assert!(check_dims("screen", (1920, 1080), 8192).is_ok());
@@ -1312,7 +1330,8 @@ mod tests {
     /// Y=63, Cb=102, Cr=240 (rounded), in a tight W*H*3/2 buffer.
     #[test]
     fn warp_nv12_readback_bt709_limited() {
-        let Ok(gpu) = Gpu::new(true, true) else {
+        let _gpu = gpu_serial();
+        let Ok(gpu) = warp() else {
             eprintln!("no WARP adapter; skipped");
             return;
         };
@@ -1348,7 +1367,8 @@ mod tests {
     /// gradient, padding, window and video content by pixel value.
     #[test]
     fn warp_composite_background_padding_video() {
-        let gpu = match Gpu::new(true, true) {
+        let _gpu = gpu_serial();
+        let gpu = match warp() {
             Ok(g) => g,
             Err(e) => {
                 eprintln!("no WARP adapter: {e}; skipped");
@@ -1403,7 +1423,8 @@ mod tests {
         bg: Option<&[u8]>,
         cam: Option<[u8; 4]>,
     ) -> Option<Vec<u8>> {
-        let gpu = Gpu::new(true, true).ok()?;
+        let _gpu = gpu_serial();
+        let gpu = warp().ok()?;
         let (sw, sh) = p.canvas;
         let cam_size = cam.map(|_| (16u32, 16u32));
         let mut c = Compositor::new(gpu, w, h, (sw, sh), 1, cam_size, Readback::Rgba).unwrap();
@@ -1617,7 +1638,8 @@ mod tests {
     }
 
     fn render(p: &RenderProject, (w, h): (u32, u32), i: Inputs) -> Option<Vec<u8>> {
-        let gpu = Gpu::new(true, true).ok()?;
+        let _gpu = gpu_serial();
+        let gpu = warp().ok()?;
         let (sw, sh) = p.canvas;
         let cam_size = i.cam.as_ref().map(|_| (16u32, 16u32));
         let mut c = Compositor::new(gpu, w, h, (sw, sh), 4, cam_size, Readback::Rgba).unwrap();
@@ -2048,49 +2070,69 @@ mod tests {
         );
     }
 
-    /// Regression: creating and dropping separate DX12 (WARP) devices on several
-    /// threads at once crashed the process with an access violation
-    /// (0xc0000005) in CI. Creation is serialised (`DEVICE_LIFECYCLE`); this
-    /// also drops devices on some threads while others are creating them.
+    /// One small webcam frame on `gpu`; returns the RGBA readback.
+    fn small_render(gpu: Gpu) -> Vec<u8> {
+        let p = cam_project();
+        let mut c =
+            Compositor::new(gpu, 64, 36, p.canvas, 1, Some((16, 16)), Readback::Rgba).unwrap();
+        c.upload_screen_rgba(&grey_screen());
+        c.upload_webcam_rgba(&[0u8, 200, 0, 255].repeat(16 * 16));
+        let s = scene::build(&p, 64.0, 36.0, 0.0, true);
+        let mut frames = c.submit(&s, 0, 0.0, [0.0, 0.0, 1.0, 1.0], 0.0).unwrap();
+        frames.extend(c.flush().unwrap());
+        frames.pop().unwrap().1
+    }
+
+    /// Regression: creating DX12 (WARP) devices on several threads at once
+    /// crashed the process (0xc0000005). `DEVICE_LIFECYCLE` serialises creation;
+    /// every device made this way works. They are dropped one at a time.
     #[test]
-    fn devices_created_and_dropped_on_many_threads_do_not_crash() {
+    fn devices_created_on_many_threads_at_once_all_work() {
+        let _gpu = gpu_serial();
         if Gpu::new(true, true).is_err() {
             eprintln!("no WARP adapter; skipped");
             return;
         }
-        let threads: Vec<_> = (0..4)
+        let handles: Vec<_> = (0..4)
+            .map(|_| std::thread::spawn(|| Gpu::new(true, true)))
+            .collect();
+        let made: Vec<Gpu> = handles
+            .into_iter()
+            .map(|h| h.join().unwrap().unwrap())
+            .collect();
+        for gpu in made {
+            assert_eq!(small_render(gpu).len(), 64 * 36 * 4);
+        }
+    }
+
+    /// Two exports at once share the one cached device and render on it from
+    /// different threads at the same time.
+    #[test]
+    fn the_shared_device_renders_on_many_threads_at_once() {
+        let _gpu = gpu_serial();
+        let Ok(first) = warp() else {
+            eprintln!("no WARP adapter; skipped");
+            return;
+        };
+        let handles: Vec<_> = (0..4)
             .map(|_| {
                 std::thread::spawn(|| {
-                    for _ in 0..6 {
-                        let gpu = Gpu::new(true, true).unwrap();
-                        let p = cam_project();
-                        let mut c = Compositor::new(
-                            gpu,
-                            64,
-                            36,
-                            p.canvas,
-                            1,
-                            Some((16, 16)),
-                            Readback::Rgba,
-                        )
-                        .unwrap();
-                        c.upload_screen_rgba(&grey_screen());
-                        c.upload_webcam_rgba(&[0u8, 200, 0, 255].repeat(16 * 16));
-                        let s = scene::build(&p, 64.0, 36.0, 0.0, true);
-                        let mut frames = c.submit(&s, 0, 0.0, [0.0, 0.0, 1.0, 1.0], 0.0).unwrap();
-                        frames.extend(c.flush().unwrap());
-                        assert_eq!(frames.pop().unwrap().1.len(), 64 * 36 * 4);
-                    }
+                    let gpu = warp().unwrap();
+                    (0..6)
+                        .map(|_| small_render(gpu.clone()).len())
+                        .collect::<Vec<_>>()
                 })
             })
             .collect();
-        for t in threads {
-            t.join().unwrap();
+        for h in handles {
+            assert!(h.join().unwrap().iter().all(|&n| n == 64 * 36 * 4));
         }
+        assert!(warp().unwrap().same_device(&first), "no second device");
     }
 
     #[test]
     fn shared_device_is_reused_and_replaced_after_an_error() {
+        let _gpu = gpu_serial();
         let Ok(a) = Gpu::shared(true, true) else {
             eprintln!("no WARP adapter; skipped");
             return;
