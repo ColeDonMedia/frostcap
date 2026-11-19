@@ -13,10 +13,10 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-389AF5"></a>
   <img alt="Platform: Windows 10/11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0752F1">
-  <img alt="Status: pre-release" src="https://img.shields.io/badge/status-pre--release-4ED2FB">
+  <a href="../../releases/latest"><img alt="Version: 0.1.0" src="https://img.shields.io/badge/version-0.1.0-4ED2FB"></a>
 </p>
 
-> **Status: 0.1.0 pre-release.** There is no published release yet; build from source to try it.
+> **Status: 0.1.0, first release.** [Download it](../../releases/latest) or build from source.
 > Everything below is implemented and covered by tests; the app has not had broad real-world testing yet.
 
 ## Features
@@ -95,12 +95,15 @@ Full details, including what each file contains and how to delete it: [docs/PRIV
 
 ## Install
 
-There is no release yet. When there is, it will be on the
-[Releases](../../releases) page as:
+Download the latest version from the [Releases](../../releases/latest) page:
 
 - `Frostcap_<version>_x64-setup.exe` - installer
 - `Frostcap_<version>_x64-portable.exe` - single exe, no installation
 - `SHA256SUMS.txt` - checksums ([how to verify](docs/RELEASING.md#verifying-a-download))
+
+The exes are not code-signed yet ([why](docs/CODE_SIGNING.md)), so Windows SmartScreen may
+warn "Windows protected your PC". Choose **More info**, then **Run anyway**. Check the
+download against `SHA256SUMS.txt` first if you want to be sure it is the real file.
 
 **Requirements**
 
